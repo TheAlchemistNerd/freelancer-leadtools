@@ -103,8 +103,10 @@ class Settings(BaseSettings):
     # ======================================================================
     # Rate Limiting
     # ======================================================================
-    rate_limit_requests: int = 100  # requests per minute per IP
+    rate_limit_requests: int = 100  # requests per window
+    rate_limit_window_seconds: int = 60  # window size in seconds
     rate_limit_enabled: bool = True
+    rate_limit_whitelist: list[str] = []  # IPs to bypass rate limiting
 
     # ======================================================================
     # CORS Settings

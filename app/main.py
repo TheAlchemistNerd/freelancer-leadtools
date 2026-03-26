@@ -4,12 +4,21 @@ Freelancer LeadTools - Free Marketing Calculators
 A collection of free calculators for lead generation.
 No authentication required - completely public API.
 
+SECURITY FEATURES:
+- Rate limiting (Redis-backed sliding window)
+- XSS protection (input sanitization)
+- CSRF protection (Origin validation + tokens)
+- Security headers (CSP, HSTS, etc.)
+- Request size limits
+- Bot protection
+
 Configuration is loaded from environment variables via app/config.py
 Copy .env.example to .env and update for your environment.
 """
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -18,6 +27,13 @@ from fastapi.responses import JSONResponse, HTMLResponse
 
 from app.config import settings
 from app.routes import api_router
+
+# Shared Core Imports - following existing project pattern
+from freelancer_core.reliability.size_limit import RequestSizeLimitMiddleware
+from freelancer_core.reliability.xss import XSSProtectionMiddleware
+from freelancer_core.reliability.security_headers import SecurityHeadersMiddleware
+from freelancer_core.reliability.csrf import CSRFProtectionMiddleware
+from freelancer_core.reliability.bot import BotProtectionMiddleware
 
 # Configure logging based on settings
 logging.basicConfig(
@@ -31,6 +47,8 @@ logger = logging.getLogger("freelancer_leadtools")
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     logger.info("Starting Freelancer LeadTools API")
+    logger.info(f"Environment: {settings.environment}")
+    logger.info(f"Rate limiting: {settings.rate_limit_requests} requests/{settings.rate_limit_window_seconds}s")
     yield
     logger.info("Shutting down Freelancer LeadTools API")
 
@@ -47,6 +65,7 @@ def create_app() -> FastAPI:
             {"name": "agencies", "description": "Calculators for agencies"},
             {"name": "shared", "description": "Calculators for both"},
             {"name": "leads", "description": "Lead capture endpoints"},
+            {"name": "health", "description": "Health checks"},
         ],
     )
 
@@ -59,6 +78,14 @@ def create_app() -> FastAPI:
         allow_headers=settings.cors_allow_headers,
     )
 
+    # SECURITY MIDDLEWARE (following freelancer-core pattern)
+    # Each middleware in its own file, added explicitly
+    app.add_middleware(RequestSizeLimitMiddleware)
+    app.add_middleware(BotProtectionMiddleware)
+    app.add_middleware(XSSProtectionMiddleware)
+    app.add_middleware(CSRFProtectionMiddleware, secret_key=os.getenv("SECRET_KEY", "dev-secret-key"))
+    app.add_middleware(SecurityHeadersMiddleware)
+
     # Include router
     app.include_router(api_router)
 
@@ -66,6 +93,19 @@ def create_app() -> FastAPI:
     @app.get("/healthz", tags=["health"])
     async def healthz():
         return {"status": "ok"}
+
+    # Redis health check
+    @app.get("/healthz/redis", tags=["health"])
+    async def healthz_redis():
+        try:
+            from app.repositories.lead_repository import get_lead_repository
+            repo = get_lead_repository()
+            r = await repo.get_redis()
+            await r.ping()
+            return {"status": "ok", "redis": "connected"}
+        except Exception as e:
+            logger.error(f"Redis health check failed: {e}")
+            return {"status": "degraded", "redis": "disconnected", "error": str(e)}
 
     # Root endpoint
     @app.get("/", tags=["health"], response_class=HTMLResponse)
@@ -75,6 +115,7 @@ def create_app() -> FastAPI:
         <html>
         <head>
             <title>Freelancer LeadTools</title>
+            <meta name="robots" content="noindex, nofollow">
         </head>
         <body>
             <h1>Freelancer LeadTools API</h1>
@@ -84,7 +125,9 @@ def create_app() -> FastAPI:
                 <li><a href="/calculators/burnout">Burnout Calculator</a></li>
                 <li><a href="/calculators/rate">Rate Calculator</a></li>
                 <li><a href="/calculators/agency-profit">Agency Profit Calculator</a></li>
+                <li><a href="/healthz">Health Check</a></li>
             </ul>
+            <p><small>Protected by rate limiting, XSS filtering, and CSRF protection</small></p>
         </body>
         </html>
         """
@@ -92,7 +135,7 @@ def create_app() -> FastAPI:
     # Custom exception handler
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
-        logger.error(f"Unhandled exception: {exc}")
+        logger.error(f"Unhandled exception: {exc}", exc_info=True)
         return JSONResponse(
             status_code=500,
             content={
@@ -101,6 +144,10 @@ def create_app() -> FastAPI:
                     "message": "An unexpected error occurred",
                 }
             },
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "DENY",
+            }
         )
 
     return app
