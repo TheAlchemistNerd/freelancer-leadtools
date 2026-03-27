@@ -7,10 +7,11 @@ No authentication required - completely public API.
 SECURITY FEATURES:
 - Rate limiting (Redis-backed sliding window)
 - XSS protection (input sanitization)
-- CSRF protection (Origin validation + tokens)
 - Security headers (CSP, HSTS, etc.)
 - Request size limits
 - Bot protection
+
+Note: CSRF protection NOT included - JWT in Authorization header prevents CSRF attacks
 
 Configuration is loaded from environment variables via app/config.py
 Copy .env.example to .env and update for your environment.
@@ -32,7 +33,6 @@ from app.routes import api_router
 from freelancer_core.reliability.size_limit import RequestSizeLimitMiddleware
 from freelancer_core.reliability.xss import XSSProtectionMiddleware
 from freelancer_core.reliability.security_headers import SecurityHeadersMiddleware
-from freelancer_core.reliability.csrf import CSRFProtectionMiddleware
 from freelancer_core.reliability.bot import BotProtectionMiddleware
 
 # Configure logging based on settings
@@ -80,10 +80,10 @@ def create_app() -> FastAPI:
 
     # SECURITY MIDDLEWARE (following freelancer-core pattern)
     # Each middleware in its own file, added explicitly
+    # Note: CSRF protection NOT needed - JWT in Authorization header prevents CSRF
     app.add_middleware(RequestSizeLimitMiddleware)
     app.add_middleware(BotProtectionMiddleware)
     app.add_middleware(XSSProtectionMiddleware)
-    app.add_middleware(CSRFProtectionMiddleware, secret_key=os.getenv("SECRET_KEY", "dev-secret-key"))
     app.add_middleware(SecurityHeadersMiddleware)
 
     # Include router
@@ -127,7 +127,7 @@ def create_app() -> FastAPI:
                 <li><a href="/calculators/agency-profit">Agency Profit Calculator</a></li>
                 <li><a href="/healthz">Health Check</a></li>
             </ul>
-            <p><small>Protected by rate limiting, XSS filtering, and CSRF protection</small></p>
+            <p><small>Protected by rate limiting, XSS filtering, and security headers</small></p>
         </body>
         </html>
         """
