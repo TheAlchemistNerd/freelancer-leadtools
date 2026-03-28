@@ -23,6 +23,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 
 import redis.asyncio as redis
+from sqlalchemy.orm import Session
+from .models import Lead
+from .database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -108,10 +111,13 @@ class LeadRepository:
             "synced_to_crm": "false",
         }
         
-        # Store lead with TTL
+        # Store lead with TTL (hot storage)
         lead_key = self.KEY_LEAD.format(email=email.lower(), timestamp=now.timestamp())
         await r.hset(lead_key, mapping=lead_data)
         await r.expire(lead_key, self.TTL_LEAD)
+        
+        # Store in SQL (cold/durable storage)
+        self._store_in_sql(lead_data, calculator_result)
         
         # Set deduplication flag
         dedupe_key = self.KEY_DEDUPE.format(email=email.lower())
@@ -123,8 +129,28 @@ class LeadRepository:
         # Queue for CRM sync
         await self._queue_for_crm_sync(r, lead_key, lead_data)
         
-        logger.info(f"Lead stored: {email} from {source}")
+        logger.info(f"Lead stored: {email} from {source} (Redis + SQL)")
         return True, "Lead captured successfully"
+
+    def _store_in_sql(self, lead_data: Dict[str, Any], calculator_result: Optional[Dict] = None):
+        """Store lead in SQL database for long-term persistence."""
+        try:
+            with SessionLocal() as db:
+                lead = Lead(
+                    email=lead_data["email"],
+                    source=lead_data["source"],
+                    user_type=lead_data["user_type"],
+                    country=lead_data["country"],
+                    calculator_result=calculator_result,
+                    ip_hash=lead_data["ip_hash"],
+                    user_agent=lead_data["user_agent"],
+                    created_at=datetime.fromisoformat(lead_data["created_at"])
+                )
+                db.add(lead)
+                db.commit()
+                logger.debug(f"Lead persisted to SQL: {lead_data['email']}")
+        except Exception as e:
+            logger.error(f"Failed to persist lead to SQL: {e}")
     
     async def _check_duplicate(self, r: redis.Redis, email: str) -> bool:
         """Check if email was submitted in last 24 hours."""

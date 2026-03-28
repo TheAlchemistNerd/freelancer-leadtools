@@ -47,6 +47,12 @@ logger = logging.getLogger("freelancer_leadtools")
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     logger.info("Starting Freelancer LeadTools API")
+    
+    # Initialize SQLite Database
+    from app.repositories.database import init_db
+    init_db()
+    logger.info("SQLite database initialized")
+    
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"Rate limiting: {settings.rate_limit_requests} requests/{settings.rate_limit_window_seconds}s")
     yield
