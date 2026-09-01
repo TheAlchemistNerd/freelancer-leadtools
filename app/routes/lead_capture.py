@@ -9,8 +9,10 @@ import logging
 from datetime import datetime
 from enum import Enum
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, EmailStr, Field
+
+from app.repositories.lead_repository import LeadRepository, get_lead_repository
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +64,7 @@ class LeadAnalyticsResponse(BaseModel):
     conversion_rate: float
 
 
-# In-memory store (replace with database in production)
-_leads: list[dict] = []
+# Removed _leads mock store - Now utilizing LeadRepository with Redis backend
 
 
 @router.post(
@@ -72,28 +73,25 @@ _leads: list[dict] = []
     summary="Capture Lead from Calculator",
     description="Save lead information when user submits email for results.",
 )
-def capture_lead(request: LeadCaptureRequest) -> LeadCaptureResponse:
+async def capture_lead(
+    request: LeadCaptureRequest,
+    repo: LeadRepository = Depends(get_lead_repository),
+) -> LeadCaptureResponse:
     """
     Capture lead from calculator result.
-
-    Stores:
-    - Email address
-    - Calculator source
-    - Calculator result (for personalization)
-    - User type and location
-
-    Returns product recommendation based on source.
+    Stores via Redis for real-time deduplication and DLQ routing.
     """
-    # Store lead
-    lead_record = {
-        "email": request.email,
-        "source": request.source.value,
-        "calculator_result": request.calculator_result,
-        "user_type": request.user_type,
-        "country": request.country,
-        "captured_at": datetime.utcnow().isoformat(),
-    }
-    _leads.append(lead_record)
+    # Persist via Repository
+    success, message = await repo.store_lead(
+        email=request.email,
+        source=request.source.value,
+        user_type=request.user_type,
+        country=request.country,
+        calculator_result=request.calculator_result,
+    )
+
+    if not success:
+        logger.warning(f"Lead capture suppressed/filtered: {message}")
 
     logger.info(f"Lead captured: {request.email} from {request.source.value}")
 
@@ -150,30 +148,18 @@ def capture_lead(request: LeadCaptureRequest) -> LeadCaptureResponse:
     "/analytics",
     response_model=LeadAnalyticsResponse,
     summary="Lead Analytics",
-    description="Get lead capture analytics (internal use).",
+    description="Get lead capture analytics directly from Redis aggregations.",
 )
-def get_lead_analytics() -> LeadAnalyticsResponse:
-    """Get lead analytics."""
-    if not _leads:
-        return LeadAnalyticsResponse(
-            total_leads=0,
-            leads_by_source={},
-            conversion_rate=0.0,
-        )
-
-    # Count by source
-    by_source: dict[str, int] = {}
-    for lead in _leads:
-        source = lead["source"]
-        by_source[source] = by_source.get(source, 0) + 1
-
-    # Calculate conversion rate (placeholder - would need actual signup data)
-    conversion_rate = 0.0  # Would calculate from actual signups
+async def get_lead_analytics(
+    repo: LeadRepository = Depends(get_lead_repository),
+) -> LeadAnalyticsResponse:
+    """Get lead analytics securely pulling from the LeadRepository."""
+    stats = await repo.get_analytics_summary(days=30)
 
     return LeadAnalyticsResponse(
-        total_leads=len(_leads),
-        leads_by_source=by_source,
-        conversion_rate=conversion_rate,
+        total_leads=stats.get("total_leads", 0),
+        leads_by_source=stats.get("leads_by_source", {}),
+        conversion_rate=0.0,  # Needs unified CRM loop validation
     )
 
 
@@ -182,8 +168,16 @@ def get_lead_analytics() -> LeadAnalyticsResponse:
     summary="Unsubscribe from Marketing",
     description="Remove email from marketing list.",
 )
-def unsubscribe(email: str) -> dict:
-    """Unsubscribe email from marketing."""
-    # In production, integrate with ConvertKit or similar
-    logger.info(f"Unsubscribe request: {email}")
+async def unsubscribe(
+    email: str,
+    repo: LeadRepository = Depends(get_lead_repository),
+) -> dict:
+    """Unsubscribe email from marketing safely."""
+    # Enqueue a CRM unsubscription event
+    r = await repo.get_redis()
+    await r.xadd(
+        repo.KEY_STREAM,
+        {"email": email, "event": "unsubscribe", "timestamp": datetime.utcnow().isoformat()}
+    )
+    logger.info(f"Unsubscribe request dispatched to CRM queue: {email}")
     return {"success": True, "message": f"Unsubscribed {email}"}
