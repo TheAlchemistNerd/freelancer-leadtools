@@ -11,7 +11,7 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.11"
-  CORE_REF: 1ca925e15ccf94ef85eba2a9e16daa4769e0e64c
+  CORE_REF: 54cf929805ca71ed6db51081329ece1667f8b29a
   DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/test_freelancer_leadtools
   REDIS_URL: redis://localhost:6379/0
   LEAD_UNSUBSCRIBE_SECRET: test-unsubscribe-secret-at-least-32-bytes
