@@ -10,7 +10,7 @@ Configuration:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from app.config import settings
 from app.schemas import (

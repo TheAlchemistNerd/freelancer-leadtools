@@ -5,7 +5,6 @@ Core calculation logic for all free calculators.
 """
 from __future__ import annotations
 
-import math
 from typing import Optional
 
 

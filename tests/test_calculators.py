@@ -1,5 +1,4 @@
 """Tests for Freelancer LeadTools Calculators."""
-import pytest
 from app.services.calculators import (
     calculate_burnout_risk,
     calculate_skill_gap,

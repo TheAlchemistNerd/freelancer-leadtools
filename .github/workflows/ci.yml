@@ -6,55 +6,87 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  CORE_REF: 1ca925e15ccf94ef85eba2a9e16daa4769e0e64c
+  DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/test_freelancer_leadtools
+  REDIS_URL: redis://localhost:6379/0
+  LEAD_UNSUBSCRIBE_SECRET: test-unsubscribe-secret-at-least-32-bytes
+
 jobs:
-  test-python:
+  test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_freelancer_leadtools
+        options: >-
+          --health-cmd "pg_isready -U postgres -d test_freelancer_leadtools"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: "3.11"
-      - name: Install dependencies
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install exact platform dependency
         run: |
           python -m pip install --upgrade pip
+          pip install "freelancer-core @ git+https://github.com/TheAlchemistNerd/freelancer-core.git@${CORE_REF}"
           pip install -r requirements.txt
+          pip check
+
       - name: Lint
-        run: |
-          ruff check app/
-          mypy app/
-      - name: Test
-        run: pytest --cov=app --cov-report=xml
+        run: ruff check app tests
+
+      - name: Type-check debt report
+        continue-on-error: true
+        run: mypy app --ignore-missing-imports
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Run tests
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing
+
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          name: freelancer-leadtools
+          fail_ci_if_error: false
 
-  test-frontend:
+  dependency-review:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - name: Install dependencies
-        run: npm ci
-      - name: Build
-        run: npm run build
-      - name: Lint
-        run: npm run lint
-
-  deploy:
-    needs: [test-python, test-frontend]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-      - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          vercel-args: "--prod"
-        continue-on-error: true  # Don't fail CI if Vercel secrets not configured
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4

@@ -7,10 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install freelancer-core first (shared library)
+# Install the shared runtime library first.
 COPY freelancer-core /freelancer-core
-COPY packages/core-auth /core-auth
-RUN pip install --no-cache-dir /freelancer-core /core-auth
+RUN pip install --no-cache-dir /freelancer-core
 
 # Copy application requirements and install
 COPY freelancer-leadtools/requirements.txt ./requirements.txt

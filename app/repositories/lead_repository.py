@@ -302,7 +302,6 @@ class LeadRepository:
                 "period": {start_date, end_date}
             }
         """
-        r = await self.get_redis()
         now = datetime.now(timezone.utc)
         
         # Calculate date range
