@@ -16,18 +16,40 @@ Key Patterns:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
+import os
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from typing import Optional, Dict, Any, List
 
 import redis.asyncio as redis
-from sqlalchemy.orm import Session
+from redis.exceptions import RedisError
+from sqlalchemy import func
 from .models import Lead
 from .database import SessionLocal
 
 logger = logging.getLogger(__name__)
+
+
+class LeadStoreStatus(str, Enum):
+    CREATED = "created"
+    DUPLICATE = "duplicate"
+    DURABLE_ONLY = "durable_only"
+
+
+@dataclass(frozen=True)
+class LeadStoreResult:
+    status: LeadStoreStatus
+    lead_id: str | None
+    crm_queued: bool
+
+    @property
+    def accepted(self) -> bool:
+        return self.status in {LeadStoreStatus.CREATED, LeadStoreStatus.DURABLE_ONLY}
 
 
 class LeadRepository:
@@ -64,9 +86,9 @@ class LeadRepository:
             self._redis = redis.from_url(
                 self.redis_url,
                 decode_responses=True,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                retry_on_timeout=True,
+                socket_connect_timeout=0.25,
+                socket_timeout=0.5,
+                retry_on_timeout=False,
             )
         return self._redis
     
@@ -77,83 +99,127 @@ class LeadRepository:
         user_type: str,
         country: Optional[str] = None,
         calculator_result: Optional[Dict] = None,
+        email_results_consent: bool = False,
+        marketing_consent: bool = False,
+        privacy_notice_version: str = "2026-09-01",
         ip_hash: Optional[str] = None,
         user_agent: Optional[str] = None,
-    ) -> tuple[bool, str]:
+    ) -> LeadStoreResult:
         """
-        Store lead in Redis with deduplication.
-        
-        Returns:
-            (is_new_lead, message)
-            - is_new_lead: True if this is a new lead (not duplicate)
-            - message: Status message
+        Persist to SQL first and use Redis as an optional acceleration layer.
+
+        Redis claims the deduplication key atomically when available. SQL is
+        authoritative so a Redis outage never silently loses a lead.
         """
-        r = await self.get_redis()
         now = datetime.now(timezone.utc)
         timestamp = now.isoformat()
-        
-        # Check for duplicate (email submitted in last 24h)
-        is_duplicate = await self._check_duplicate(r, email)
-        if is_duplicate:
-            logger.info(f"Duplicate lead suppressed: {email}")
-            return False, "Lead already captured in last 24 hours"
+        normalized_email = email.strip().lower()
+        dedupe_key = self.KEY_DEDUPE.format(email=normalized_email)
+        redis_client: redis.Redis | None = None
+        dedupe_claimed = False
+
+        try:
+            redis_client = await self.get_redis()
+            dedupe_claimed = bool(
+                await redis_client.set(dedupe_key, timestamp, ex=self.TTL_DEDUPE, nx=True)
+            )
+            if not dedupe_claimed:
+                logger.info("Duplicate lead suppressed", extra={"lead_source": source})
+                return LeadStoreResult(LeadStoreStatus.DUPLICATE, None, False)
+        except RedisError:
+            logger.warning("Redis unavailable during lead capture; using durable storage")
+            redis_client = None
         
         # Create lead data
         lead_data = {
-            "email": email,
+            "email": normalized_email,
             "source": source,
             "user_type": user_type,
             "country": country or "unknown",
-            "calculator_result": json.dumps(calculator_result) if calculator_result else None,
+            "calculator_result": json.dumps(calculator_result or {}, sort_keys=True),
+            "email_results_consent": "true" if email_results_consent else "false",
+            "marketing_consent": "true" if marketing_consent else "false",
+            "privacy_notice_version": privacy_notice_version,
             "ip_hash": ip_hash or self._hash_ip("unknown"),
             "user_agent": user_agent or "unknown",
             "created_at": timestamp,
             "synced_to_crm": "false",
         }
         
-        # Store lead with TTL (hot storage)
-        lead_key = self.KEY_LEAD.format(email=email.lower(), timestamp=now.timestamp())
-        await r.hset(lead_key, mapping=lead_data)
-        await r.expire(lead_key, self.TTL_LEAD)
-        
-        # Store in SQL (cold/durable storage)
-        self._store_in_sql(lead_data, calculator_result)
-        
-        # Set deduplication flag
-        dedupe_key = self.KEY_DEDUPE.format(email=email.lower())
-        await r.set(dedupe_key, timestamp, ex=self.TTL_DEDUPE)
-        
-        # Update analytics counters
-        await self._update_analytics(r, source, now)
-        
-        # Queue for CRM sync
-        await self._queue_for_crm_sync(r, lead_key, lead_data)
-        
-        logger.info(f"Lead stored: {email} from {source} (Redis + SQL)")
-        return True, "Lead captured successfully"
-
-    def _store_in_sql(self, lead_data: Dict[str, Any], calculator_result: Optional[Dict] = None):
-        """Store lead in SQL database for long-term persistence."""
         try:
-            with SessionLocal() as db:
-                lead = Lead(
-                    email=lead_data["email"],
-                    source=lead_data["source"],
-                    user_type=lead_data["user_type"],
-                    country=lead_data["country"],
-                    calculator_result=calculator_result,
-                    ip_hash=lead_data["ip_hash"],
-                    user_agent=lead_data["user_agent"],
-                    created_at=datetime.fromisoformat(lead_data["created_at"])
+            lead_id, sql_duplicate = await asyncio.to_thread(
+                self._store_in_sql, lead_data, calculator_result
+            )
+        except Exception:
+            if redis_client is not None and dedupe_claimed:
+                await redis_client.delete(dedupe_key)
+            logger.exception("Durable lead persistence failed")
+            raise
+        if sql_duplicate:
+            if redis_client is not None and dedupe_claimed:
+                await redis_client.delete(dedupe_key)
+            return LeadStoreResult(LeadStoreStatus.DUPLICATE, lead_id, False)
+
+        if redis_client is None:
+            logger.info("Lead stored durably", extra={"lead_source": source})
+            return LeadStoreResult(LeadStoreStatus.DURABLE_ONLY, lead_id, False)
+
+        lead_key = self.KEY_LEAD.format(
+            email=hashlib.sha256(normalized_email.encode()).hexdigest()[:24],
+            timestamp=now.timestamp(),
+        )
+        try:
+            await redis_client.hset(lead_key, mapping=lead_data)
+            await redis_client.expire(lead_key, self.TTL_LEAD)
+            await self._update_analytics(redis_client, source, now)
+            await self._queue_for_crm_sync(redis_client, lead_key, lead_data)
+        except RedisError:
+            logger.warning("Lead persisted but Redis enrichment/queueing failed")
+            return LeadStoreResult(LeadStoreStatus.DURABLE_ONLY, lead_id, False)
+
+        logger.info("Lead stored and queued", extra={"lead_source": source})
+        return LeadStoreResult(LeadStoreStatus.CREATED, lead_id, True)
+
+    def _store_in_sql(
+        self, lead_data: Dict[str, Any], calculator_result: Optional[Dict] = None
+    ) -> tuple[str | None, bool]:
+        """Store a lead durably and enforce the dedupe window as a fallback."""
+        with SessionLocal() as db:
+            created_at = datetime.fromisoformat(lead_data["created_at"])
+            cutoff = created_at - timedelta(seconds=self.TTL_DEDUPE)
+            duplicate = (
+                db.query(Lead.id)
+                .filter(
+                    func.lower(Lead.email) == lead_data["email"],
+                    Lead.created_at >= cutoff,
                 )
-                db.add(lead)
-                db.commit()
-                logger.debug(f"Lead persisted to SQL: {lead_data['email']}")
-        except Exception as e:
-            logger.error(f"Failed to persist lead to SQL: {e}")
+                .first()
+            )
+            if duplicate:
+                return str(duplicate[0]), True
+
+            lead = Lead(
+                email=lead_data["email"],
+                source=lead_data["source"],
+                user_type=lead_data["user_type"],
+                country=lead_data["country"],
+                calculator_result=calculator_result,
+                email_results_consent=int(
+                    lead_data["email_results_consent"] == "true"
+                ),
+                marketing_consent=int(lead_data["marketing_consent"] == "true"),
+                privacy_notice_version=lead_data["privacy_notice_version"],
+                ip_hash=lead_data["ip_hash"],
+                user_agent=lead_data["user_agent"],
+                created_at=created_at,
+            )
+            db.add(lead)
+            db.commit()
+            db.refresh(lead)
+            return str(lead.id), False
     
     async def _check_duplicate(self, r: redis.Redis, email: str) -> bool:
-        """Check if email was submitted in last 24 hours."""
+        """Compatibility helper for callers that only need a read check."""
         dedupe_key = self.KEY_DEDUPE.format(email=email.lower())
         return await r.exists(dedupe_key)
     
@@ -194,6 +260,8 @@ class LeadRepository:
                 "email": lead_data["email"],
                 "source": lead_data["source"],
                 "created_at": lead_data["created_at"],
+                "marketing_consent": lead_data["marketing_consent"],
+                "privacy_notice_version": lead_data["privacy_notice_version"],
             },
         )
     
@@ -326,6 +394,33 @@ class LeadRepository:
         
         # Acknowledge stream message
         await r.xack(self.KEY_STREAM, "crm_sync_group", message_id)
+
+    async def unsubscribe_email(self, email: str) -> int:
+        """Persist an unsubscribe before attempting optional CRM delivery."""
+        normalized_email = email.strip().lower()
+        updated = await asyncio.to_thread(self._persist_unsubscribe, normalized_email)
+
+        try:
+            r = await self.get_redis()
+            await r.xadd(
+                self.KEY_STREAM,
+                {"email": normalized_email, "event": "unsubscribe"},
+            )
+        except RedisError:
+            logger.warning("Unsubscribe persisted; CRM queue is temporarily unavailable")
+
+        return updated
+
+    @staticmethod
+    def _persist_unsubscribe(normalized_email: str) -> int:
+        with SessionLocal() as db:
+            updated = (
+                db.query(Lead)
+                .filter(func.lower(Lead.email) == normalized_email)
+                .update({Lead.marketing_consent: 0}, synchronize_session=False)
+            )
+            db.commit()
+            return int(updated)
     
     async def close(self):
         """Close Redis connection."""

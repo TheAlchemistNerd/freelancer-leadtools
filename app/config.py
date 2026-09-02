@@ -14,6 +14,7 @@ import os
 from functools import lru_cache
 from typing import Optional
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -128,6 +129,7 @@ class Settings(BaseSettings):
     # ======================================================================
     api_key_header: str = "X-API-Key"
     api_keys: list[str] = []  # List of valid API keys for protected endpoints
+    lead_unsubscribe_secret: str = ""
 
     # ======================================================================
     # Database (for lead storage - optional, uses memory by default)
@@ -259,6 +261,22 @@ class Settings(BaseSettings):
         # Update email from with domain
         if self.email_from == "noreply@leadtools.osfreelance.com":
             self.email_from = f"noreply@leadtools.{self.base_domain}"
+
+    @model_validator(mode="after")
+    def validate_production_settings(self) -> "Settings":
+        if self.is_production:
+            missing = []
+            if not self.database_url:
+                missing.append("DATABASE_URL")
+            if not self.redis_url:
+                missing.append("REDIS_URL")
+            if not self.api_keys:
+                missing.append("API_KEYS")
+            if len(self.lead_unsubscribe_secret) < 32:
+                missing.append("LEAD_UNSUBSCRIBE_SECRET (minimum 32 characters)")
+            if missing:
+                raise ValueError("Missing production settings: " + ", ".join(missing))
+        return self
 
 
 @lru_cache

@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install freelancer-core first (shared library)
 COPY freelancer-core /freelancer-core
-RUN pip install --no-cache-dir /freelancer-core
+COPY packages/core-auth /core-auth
+RUN pip install --no-cache-dir /freelancer-core /core-auth
 
 # Copy application requirements and install
 COPY freelancer-leadtools/requirements.txt ./requirements.txt

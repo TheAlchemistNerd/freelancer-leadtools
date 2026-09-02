@@ -5,27 +5,16 @@
     {
       "src": "app/main.py",
       "use": "@vercel/python"
-    },
-    {
-      "src": "package.json",
-      "use": "@vercel/next"
     }
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "app/main.py"
-    },
-    {
       "src": "/(.*)",
-      "dest": "/$1"
+      "dest": "app/main.py"
     }
   ],
   "env": {
     "PYTHON_VERSION": "3.11"
   },
-  "regions": ["iad1"],
-  "analytics": {
-    "enabled": true
-  }
+  "regions": ["iad1"]
 }

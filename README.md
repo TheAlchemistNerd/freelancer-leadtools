@@ -69,12 +69,8 @@ freelancer-leadtools/
 │   ├── schemas/            # Pydantic validation schemas
 │   ├── services/           # Business logic and calculations
 │   └── templates/          # Email notification templates
-├── pages/                  # Next.js frontend for SEO
-│   ├── calculators/        # Calculator landing pages
-│   └── blog/               # Content marketing
 ├── tests/                  # Test suite
 ├── requirements.txt        # Python dependencies
-├── package.json            # Node.js dependencies
 └── vercel.json             # Vercel deployment configuration
 ```
 
@@ -93,12 +89,11 @@ Users begin at free calculators where they input data such as weekly hours, slee
 | Component | Technology Selection |
 |-----------|---------------------|
 | Backend Framework | FastAPI |
-| Frontend Framework | Next.js 14 with App Router |
-| Styling | Tailwind CSS with Shadcn UI components |
-| Analytics | Plausible (privacy-focused) |
-| Email Service | ConvertKit API |
-| Deployment | Vercel Edge CDN |
-| Monitoring | Vercel Analytics |
+| Public interface | FastAPI JSON API and minimal HTML index |
+| Durable storage | PostgreSQL via SQLAlchemy and Alembic |
+| Ephemeral coordination | Redis rate limits, deduplication, and CRM event stream |
+| Deployment | Container or Vercel Python runtime |
+| Future UI | Separate SEO web application; not currently implemented |
 
 ---
 
@@ -149,13 +144,13 @@ For comprehensive security architecture details, reference the SECURITY_ARCHITEC
 
 ## Redis Storage Architecture
 
-LeadTools utilizes Redis for all data storage including leads, sessions, and analytics, optimized for edge deployment with automatic TTL-based eviction.
+LeadTools uses PostgreSQL as the durable source of truth for captured leads and consent state. Redis is an optional acceleration and coordination layer; an outage must not discard a lead or an unsubscribe request.
 
-**Lead Storage:** Leads are stored in Redis Hashes with 7-day TTL, automatically evicted after expiration. CRM sync workers process leads before deletion.
+**Lead Storage:** Leads and their consent state are committed to PostgreSQL. Redis performs atomic duplicate suppression and emits CRM synchronization events when available.
 
-**Session Management:** Calculator state and CSRF tokens are stored in Redis with 24-hour TTL.
+**Public calculators:** Calculator requests are stateless. No server-side calculator session is required.
 
-**Analytics:** Real-time counters track views, completions, and conversions using Redis INCR operations.
+**Analytics:** Product analytics is not yet implemented and must not be inferred from the Redis integration.
 
 For detailed Redis architecture including key patterns and data structures, reference the SECURITY_ARCHITECTURE.md document.
 

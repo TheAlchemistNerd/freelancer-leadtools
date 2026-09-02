@@ -5,14 +5,24 @@ Capture emails and track conversions from calculators.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
-from datetime import datetime
 from enum import Enum
+from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, EmailStr, Field
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
-from app.repositories.lead_repository import LeadRepository, get_lead_repository
+from freelancer_core.artifacts import Artifact
+
+from app.config import settings
+from app.repositories.lead_repository import (
+    LeadRepository,
+    LeadStoreStatus,
+    get_lead_repository,
+)
+from app.services.action_brief import build_action_brief
 
 logger = logging.getLogger(__name__)
 
@@ -44,17 +54,32 @@ class LeadCaptureRequest(BaseModel):
     """Lead capture request."""
     email: EmailStr
     source: LeadSource
-    calculator_result: dict | None = None
-    user_type: str = Field(default="individual", description="individual or agency")
+    calculator_result: dict[str, Any] = Field(default_factory=dict)
+    user_type: Literal["individual", "agency"] = "individual"
     country: str | None = None
+    email_results_consent: bool = Field(
+        description="Explicit permission to process the email to deliver requested results."
+    )
+    marketing_consent: bool = False
+
+    @model_validator(mode="after")
+    def require_results_consent(self) -> "LeadCaptureRequest":
+        if not self.email_results_consent:
+            raise ValueError("email_results_consent must be true to request emailed results")
+        return self
 
 
 class LeadCaptureResponse(BaseModel):
     """Lead capture response."""
     success: bool
+    status: LeadStoreStatus
+    lead_id: str | None
+    crm_queued: bool
     message: str
     next_steps: list[str]
+    product_slug: str
     product_recommendation: str
+    action_brief: Artifact
 
 
 class LeadAnalyticsResponse(BaseModel):
@@ -62,6 +87,32 @@ class LeadAnalyticsResponse(BaseModel):
     total_leads: int
     leads_by_source: dict[str, int]
     conversion_rate: float
+
+
+class ActionBriefRequest(BaseModel):
+    source: LeadSource
+    calculator_result: dict[str, Any] = Field(default_factory=dict)
+    user_type: Literal["individual", "agency"] = "individual"
+
+
+class UnsubscribeRequest(BaseModel):
+    email: EmailStr
+    token: str = Field(min_length=64, max_length=64)
+
+
+def require_analytics_api_key(
+    api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> None:
+    """Keep funnel/PII-adjacent metrics out of the public calculator API."""
+    if not settings.api_keys:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Analytics access is not configured",
+        )
+    if api_key is None or not any(
+        hmac.compare_digest(api_key, candidate) for candidate in settings.api_keys
+    ):
+        raise HTTPException(status_code=403, detail="Invalid API key")
 
 
 # Removed _leads mock store - Now utilizing LeadRepository with Redis backend
@@ -82,36 +133,20 @@ async def capture_lead(
     Stores via Redis for real-time deduplication and DLQ routing.
     """
     # Persist via Repository
-    success, message = await repo.store_lead(
-        email=request.email,
+    result = await repo.store_lead(
+        email=str(request.email),
         source=request.source.value,
         user_type=request.user_type,
         country=request.country,
         calculator_result=request.calculator_result,
+        email_results_consent=request.email_results_consent,
+        marketing_consent=request.marketing_consent,
     )
 
-    if not success:
-        logger.warning(f"Lead capture suppressed/filtered: {message}")
-
-    logger.info(f"Lead captured: {request.email} from {request.source.value}")
-
-    # Determine product recommendation
-    individual_sources = {
-        LeadSource.BURNOUT, LeadSource.SKILL_GAP, LeadSource.PORTFOLIO,
-        LeadSource.CLIENT_FIT, LeadSource.SCOPE_CREEP, LeadSource.HOURLY_RATE,
-        LeadSource.FREELANCE_VS_FULLTIME,
-    }
-    agency_sources = {
-        LeadSource.AGENCY_PROFIT, LeadSource.UTILIZATION, LeadSource.CLIENT_LTV,
-        LeadSource.PROPOSAL_WIN_RATE, LeadSource.CASH_FLOW, LeadSource.BREAK_EVEN,
-    }
-
-    if request.source in individual_sources or request.user_type == "individual":
-        product = "freelance-growth"
-        product_name = "Freelance Growth OS"
-    else:
-        product = "freelancer-dealflow"
-        product_name = "Freelance DealFlow OS"
+    logger.info(
+        "Lead capture processed",
+        extra={"lead_source": request.source.value, "lead_status": result.status.value},
+    )
 
     # Personalized next steps based on source
     next_steps_map = {
@@ -132,15 +167,51 @@ async def capture_lead(
         ],
     }
 
+    action_brief = build_action_brief(
+        source=request.source.value,
+        calculator_result=request.calculator_result,
+        user_type=request.user_type,
+    )
+    product = str(action_brief.metadata["product"])
+    product_name = (
+        "Freelance Growth OS"
+        if product == "freelance-growth"
+        else "Freelance DealFlow OS"
+    )
+    if result.status == LeadStoreStatus.DUPLICATE:
+        message = "This result request was already recorded recently."
+    elif result.crm_queued:
+        message = "Your result request was recorded and queued for delivery."
+    else:
+        message = "Your result request was recorded; delivery is pending."
+
     return LeadCaptureResponse(
         success=True,
-        message=f"Thanks! We've sent your results to {request.email}",
+        status=result.status,
+        lead_id=result.lead_id,
+        crm_queued=result.crm_queued,
+        message=message,
         next_steps=next_steps_map.get(request.source, [
-            "Check your email for detailed results",
-            "Start your free trial",
-            "Explore all features",
+            "Save your action brief",
+            "Complete its highest-impact action",
+            "Repeat the calculator and compare the result",
         ]),
+        product_slug=product,
         product_recommendation=product_name,
+        action_brief=action_brief,
+    )
+
+
+@router.post(
+    "/action-brief",
+    response_model=Artifact,
+    summary="Create an action brief without capturing personal data",
+)
+async def create_action_brief(request: ActionBriefRequest) -> Artifact:
+    return build_action_brief(
+        source=request.source.value,
+        calculator_result=request.calculator_result,
+        user_type=request.user_type,
     )
 
 
@@ -151,6 +222,7 @@ async def capture_lead(
     description="Get lead capture analytics directly from Redis aggregations.",
 )
 async def get_lead_analytics(
+    _: None = Depends(require_analytics_api_key),
     repo: LeadRepository = Depends(get_lead_repository),
 ) -> LeadAnalyticsResponse:
     """Get lead analytics securely pulling from the LeadRepository."""
@@ -164,20 +236,26 @@ async def get_lead_analytics(
 
 
 @router.post(
-    "/unsubscribe/{email}",
+    "/unsubscribe",
     summary="Unsubscribe from Marketing",
     description="Remove email from marketing list.",
 )
 async def unsubscribe(
-    email: str,
+    request: UnsubscribeRequest,
     repo: LeadRepository = Depends(get_lead_repository),
 ) -> dict:
-    """Unsubscribe email from marketing safely."""
-    # Enqueue a CRM unsubscription event
-    r = await repo.get_redis()
-    await r.xadd(
-        repo.KEY_STREAM,
-        {"email": email, "event": "unsubscribe", "timestamp": datetime.utcnow().isoformat()}
-    )
-    logger.info(f"Unsubscribe request dispatched to CRM queue: {email}")
-    return {"success": True, "message": f"Unsubscribed {email}"}
+    """Unsubscribe using the HMAC token issued in a delivery email."""
+    if not settings.lead_unsubscribe_secret:
+        raise HTTPException(status_code=503, detail="Unsubscribe service is not configured")
+    normalized_email = str(request.email).strip().lower()
+    expected = hmac.new(
+        settings.lead_unsubscribe_secret.encode(),
+        normalized_email.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(request.token, expected):
+        raise HTTPException(status_code=403, detail="Invalid unsubscribe token")
+
+    await repo.unsubscribe_email(normalized_email)
+    logger.info("Unsubscribe request persisted")
+    return {"success": True, "message": "The unsubscribe request was accepted."}

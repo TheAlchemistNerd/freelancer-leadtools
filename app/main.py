@@ -11,7 +11,8 @@ SECURITY FEATURES:
 - Request size limits
 - Bot protection
 
-Note: CSRF protection NOT included - JWT in Authorization header prevents CSRF attacks
+The API does not use cookie authentication, so browser CSRF tokens are not the
+primary control. Deployment CORS origins must still be explicit.
 
 Configuration is loaded from environment variables via app/config.py
 Copy .env.example to .env and update for your environment.
@@ -22,7 +23,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 
@@ -34,6 +35,8 @@ from freelancer_core.reliability.size_limit import RequestSizeLimitMiddleware
 from freelancer_core.reliability.xss import XSSProtectionMiddleware
 from freelancer_core.reliability.security_headers import SecurityHeadersMiddleware
 from freelancer_core.reliability.bot import BotProtectionMiddleware
+from freelancer_core.reliability.rate_limit import RateLimiter
+from freelancer_core.reliability.redis import RedisFactory
 
 # Configure logging based on settings
 logging.basicConfig(
@@ -47,25 +50,49 @@ logger = logging.getLogger("freelancer_leadtools")
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     logger.info("Starting Freelancer LeadTools API")
+
+    redis_url = settings.redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    RedisFactory.init(redis_url)
     
-    # Initialize SQLite Database
-    from app.repositories.database import init_db
-    init_db()
-    logger.info("SQLite database initialized")
+    from sqlalchemy import inspect
+    from app.repositories.database import engine, init_db
+
+    if settings.is_development:
+        init_db()
+        logger.info("Development database schema initialized")
+    elif "leads" not in inspect(engine).get_table_names():
+        raise RuntimeError("LeadTools database is not migrated; run 'alembic upgrade head'")
     
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"Rate limiting: {settings.rate_limit_requests} requests/{settings.rate_limit_window_seconds}s")
     yield
+    from app.repositories.lead_repository import get_lead_repository
+
+    await get_lead_repository(redis_url).close()
+    await RedisFactory.close()
     logger.info("Shutting down Freelancer LeadTools API")
 
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    rate_limit_dependencies = []
+    if settings.rate_limit_enabled:
+        rate_limit_dependencies.append(
+            Depends(
+                RateLimiter(
+                    requests=settings.rate_limit_requests,
+                    period=settings.rate_limit_window_seconds,
+                    scope="ip",
+                )
+            )
+        )
+
     app = FastAPI(
         title=settings.app_name,
         description="Free calculators for freelancers and agencies",
         version=settings.app_version,
         lifespan=lifespan,
+        dependencies=rate_limit_dependencies,
         openapi_tags=[
             {"name": "individuals", "description": "Calculators for individual freelancers"},
             {"name": "agencies", "description": "Calculators for agencies"},
@@ -86,7 +113,7 @@ def create_app() -> FastAPI:
 
     # SECURITY MIDDLEWARE (following freelancer-core pattern)
     # Each middleware in its own file, added explicitly
-    # Note: CSRF protection NOT needed - JWT in Authorization header prevents CSRF
+    # No cookie-authenticated state is used, so CSRF tokens are not required.
     app.add_middleware(RequestSizeLimitMiddleware)
     app.add_middleware(BotProtectionMiddleware)
     app.add_middleware(XSSProtectionMiddleware)
@@ -109,9 +136,12 @@ def create_app() -> FastAPI:
             r = await repo.get_redis()
             await r.ping()
             return {"status": "ok", "redis": "connected"}
-        except Exception as e:
-            logger.error(f"Redis health check failed: {e}")
-            return {"status": "degraded", "redis": "disconnected", "error": str(e)}
+        except Exception:
+            logger.exception("Redis health check failed")
+            return JSONResponse(
+                status_code=503,
+                content={"status": "degraded", "redis": "disconnected"},
+            )
 
     # Root endpoint
     @app.get("/", tags=["health"], response_class=HTMLResponse)
