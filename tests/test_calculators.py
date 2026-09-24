@@ -126,7 +126,9 @@ class TestScopeCreep:
             hours_per_request=2,
             hourly_rate=100,
             delay_days=10,
+            displaced_billable_hours=4,
         )
         assert result["direct_cost"] == 1000
         assert result["total_cost"] > result["direct_cost"]
+        assert result["delay_cost"] == 400
         assert "Change Order" in result["boundary_message"]

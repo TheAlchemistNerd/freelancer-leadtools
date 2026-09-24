@@ -170,3 +170,14 @@ MIT License - see LICENSE file for complete terms.
 
 *Author: Nevil Maloba*  
 *Last Updated: March 2026*
+> Current implementation note: route contracts are regression-tested. Cost-of-living,
+> tax-reserve and retirement tools now use explicit user assumptions, not invented
+> country rates. Legacy URLs remain aliases but require the new scenario inputs.
+> Unknown market/benchmark metrics are empty or null, not verified estimates.
+> The public web UI and persistent product handoffs remain unimplemented.
+> See the root docs/internal/leadtools-execution-plan.md for current work.
+
+### Scenario tools (current API)
+
+See [scenario methodology and examples](docs/SCENARIO_TOOLS.md). These tools do
+not require an AI provider, external data subscription, or login.

@@ -7,7 +7,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel as PydanticBaseModel, ConfigDict, Field, EmailStr, model_validator
+
+
+class BaseModel(PydanticBaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
 
 
 # =============================================================================
@@ -47,6 +51,7 @@ class SkillGapRequest(BaseModel):
     target_role: str = Field(description="Target role (e.g., 'Senior Backend Developer')")
     current_skills: list[str] = Field(description="List of current skills")
     experience_level: str = Field(description="Experience level (junior, mid, senior)")
+    target_skills: list[str] = Field(default_factory=list, max_length=30, description="Your explicit target capabilities; overrides the role starter template")
 
 
 class SkillGapResponse(BaseModel):
@@ -55,6 +60,7 @@ class SkillGapResponse(BaseModel):
     gaps: list[str]
     roadmap: list[str]
     resources: list[str]
+    methodology: str = "Starter checklist or user-defined targets; not a labor-market assessment."
     cta: CTA
 
 
@@ -98,6 +104,8 @@ class ScopeCreepRequest(BaseModel):
     avg_hours_per_request: float = Field(ge=0)
     hourly_rate: float = Field(gt=0)
     delivery_delay_days: int = Field(ge=0)
+    displaced_billable_hours: float = Field(ge=0, le=100000, default=0, description="Other paid work actually displaced; exclude hours already counted above")
+    currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
 
 
 class ScopeCreepResponse(BaseModel):
@@ -106,6 +114,9 @@ class ScopeCreepResponse(BaseModel):
     delay_cost: float
     total_cost: float
     boundary_message: str
+    currency: str
+    assumptions: list[str]
+    formula_version: str = "scope-cost-v2"
     cta: CTA
 
 
@@ -162,7 +173,7 @@ class AgencyProfitResponse(BaseModel):
     gross_profit: float
     net_profit: float
     margin_percent: float
-    industry_benchmark: float
+    industry_benchmark: float | None
     cta: CTA
 
 
@@ -172,14 +183,17 @@ class UtilizationRequest(BaseModel):
     billable_team_members: int = Field(ge=0)
     available_hours_per_week: float = Field(gt=0)
     tracked_billable_hours: float = Field(ge=0)
+    target_utilization_percent: float = Field(ge=0, le=100, default=75, description="Editable planning target, not an industry benchmark")
+    average_hourly_rate: float | None = Field(default=None, gt=0, le=1000000)
 
 
 class UtilizationResponse(BaseModel):
     """Utilization rate calculator output."""
     utilization_percent: float
     benchmark: float
-    lost_revenue: float
+    lost_revenue: float | None
     recommendations: list[str]
+    methodology: str = "Benchmark is your planning target; revenue gap assumes unused capacity could be sold at the supplied rate."
     cta: CTA
 
 
@@ -206,12 +220,18 @@ class ProposalWinRateRequest(BaseModel):
     total_value_sent: float = Field(gt=0)
     total_value_won: float = Field(ge=0)
 
+    @model_validator(mode="after")
+    def wins_cannot_exceed_submissions(self):
+        if self.proposals_won > self.proposals_sent or self.total_value_won > self.total_value_sent:
+            raise ValueError("Wins cannot exceed submitted proposals or value")
+        return self
+
 
 class ProposalWinRateResponse(BaseModel):
     """Proposal win rate calculator output."""
     win_rate: float
     value_win_rate: float
-    benchmark: float
+    benchmark: float | None
     recommendations: list[str]
     cta: CTA
 
@@ -238,12 +258,13 @@ class BreakEvenRequest(BaseModel):
     """Break-even analysis input."""
     monthly_fixed_costs: float = Field(gt=0)
     average_project_margin_percent: float = Field(gt=0, le=100)
+    average_project_value: float | None = Field(default=None, gt=0, le=1000000000)
 
 
 class BreakEvenResponse(BaseModel):
     """Break-even analysis output."""
     monthly_revenue: float
-    projects_needed: float
+    projects_needed: float | None
     daily_revenue: float
     cta: CTA
 
@@ -255,7 +276,9 @@ class BreakEvenResponse(BaseModel):
 
 class RateCalculatorRequest(BaseModel):
     """PPP-adjusted rate calculator input."""
-    base_rate: float = Field(gt=0, description="Base hourly rate in base currency")
+    base_rate: float = Field(gt=0, le=1000000000, description="Base hourly rate in base currency")
+    cost_ratio: float = Field(gt=0, le=100, description="Target/base living-cost ratio, supplied by you; not an exchange rate")
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
     base_country: str = Field(description="Base country code (ISO 3166-1 alpha-2)")
     target_country: str = Field(description="Target country code")
     user_type: str = Field(default="individual", description="individual or agency")
@@ -265,15 +288,20 @@ class RateCalculatorResponse(BaseModel):
     """PPP-adjusted rate calculator output."""
     adjusted_rate: float
     ppp_multiplier: float
-    local_market_rate: float
+    local_market_rate: float | None = None
+    currency: str
+    assumptions: list[str]
+    formula_version: str
     recommendation: str
     cta: CTA
 
 
 class TaxEstimatorRequest(BaseModel):
     """Tax estimator input."""
-    annual_income: float = Field(gt=0)
-    business_expenses: float = Field(ge=0, default=0)
+    annual_income: float = Field(gt=0, le=1000000000000)
+    reserve_rate_percent: float = Field(ge=0, le=100)
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+    business_expenses: float = Field(ge=0, le=1000000000000, default=0)
     country: str = Field(description="Country code")
     user_type: str = Field(default="individual")
 
@@ -284,6 +312,9 @@ class TaxEstimatorResponse(BaseModel):
     effective_rate: float
     quarterly_payment: float
     common_deductions: list[str]
+    currency: str
+    assumptions: list[str]
+    formula_version: str
     cta: CTA
 
 
@@ -291,9 +322,19 @@ class RetirementPlannerRequest(BaseModel):
     """Retirement planner input."""
     current_age: int = Field(ge=18, le=100)
     retirement_age: int = Field(ge=50, le=100)
-    current_retirement_savings: float = Field(ge=0)
-    annual_income: float = Field(gt=0)
+    current_retirement_savings: float = Field(ge=0, le=1000000000000)
+    annual_income: float = Field(gt=0, le=1000000000000)
     desired_replacement_rate: float = Field(ge=0.5, le=1.0, default=0.8)
+    annual_return_percent: float = Field(ge=-50, le=50)
+    inflation_percent: float = Field(ge=0, le=30)
+    withdrawal_rate_percent: float = Field(ge=0.1, le=100)
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+
+    @model_validator(mode="after")
+    def retirement_must_be_future(self):
+        if self.retirement_age <= self.current_age:
+            raise ValueError("Retirement age must be greater than current age")
+        return self
 
 
 class RetirementPlannerResponse(BaseModel):
@@ -302,6 +343,11 @@ class RetirementPlannerResponse(BaseModel):
     annual_contribution: float
     projected_total: float
     shortfall: float
+    target_total: float
+    projected_without_contributions: float
+    currency: str
+    assumptions: list[str]
+    formula_version: str
     cta: CTA
 
 

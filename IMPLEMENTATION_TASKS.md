@@ -660,3 +660,6 @@ This document outlines all tasks required to implement comprehensive web securit
 **Last Updated:** 2026-03-26  
 **Next Review:** 2026-03-28  
 **Project Lead:** Engineering Team
+> Historical backlog: superseded by the root repository's
+> docs/internal/leadtools-execution-plan.md. Do not implement Redis-only durable
+> lead storage or calculator sessions from this old list. PostgreSQL owns leads.

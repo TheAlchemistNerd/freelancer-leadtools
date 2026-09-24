@@ -89,6 +89,7 @@ def calculate_skill_gap(request: SkillGapRequest) -> SkillGapResponse:
         target_role=request.target_role,
         current_skills=request.current_skills,
         experience_level=request.experience_level,
+        target_skills=request.target_skills,
     )
     return SkillGapResponse(
         normalized_skills=result["normalized_skills"],
@@ -160,7 +161,7 @@ def calculate_client_fit(request: ClientFitRequest) -> ClientFitResponse:
         cta={
             "title": "Track Client Relationships",
             "description": "Log client interactions and identify patterns in your best (and worst) clients.",
-            "url": settings.get_signup_url("freelance-growth", "client-fit"),
+            "url": settings.get_signup_url("freelancer-dealflow", "client-fit"),
         },
     )
 
@@ -182,16 +183,20 @@ def calculate_scope_creep(request: ScopeCreepRequest) -> ScopeCreepResponse:
         hours_per_request=request.avg_hours_per_request,
         hourly_rate=request.hourly_rate,
         delay_days=request.delivery_delay_days,
+        displaced_billable_hours=request.displaced_billable_hours,
+        currency=request.currency,
     )
     return ScopeCreepResponse(
         direct_cost=result["direct_cost"],
         delay_cost=result["delay_cost"],
         total_cost=result["total_cost"],
         boundary_message=result["boundary_message"],
+        currency=result["currency"],
+        assumptions=result["assumptions"],
         cta={
             "title": "Set Professional Boundaries",
             "description": "Get templates for change orders, boundary setting, and client communication.",
-            "url": settings.get_signup_url("freelance-growth", "scope-creep"),
+            "url": settings.get_signup_url("freelancer-dealflow", "scope-creep"),
         },
     )
 
@@ -209,11 +214,11 @@ def calculate_hourly_rate(request: HourlyRateRequest) -> HourlyRateResponse:
     **CTA:** "Track time effectively" → freelance-growth TimeBank
     """
     result = calculators.calculate_hourly_rate(
-        target_annual_income=request.target_annual_income,
+        target_income=request.target_annual_income,
         billable_weeks=request.billable_weeks_per_year,
         billable_hours=request.billable_hours_per_week,
         expenses=request.annual_expenses,
-        taxes=request.tax_rate_percent,
+        tax_rate=request.tax_rate_percent,
     )
     return HourlyRateResponse(
         hourly_rate=result["hourly_rate"],
@@ -222,7 +227,7 @@ def calculate_hourly_rate(request: HourlyRateRequest) -> HourlyRateResponse:
         cta={
             "title": "Track Your Time",
             "description": "Accurately track billable hours and ensure you're meeting your rate targets.",
-            "url": settings.get_signup_url("freelance-growth", "rate-calculator"),
+            "url": settings.get_signup_url("freelancer-dealflow", "rate-calculator"),
         },
     )
 
@@ -241,7 +246,7 @@ def calculate_freelance_vs_fulltime(request: FreelanceVsFulltimeRequest) -> Free
     """
     result = calculators.compare_freelance_vs_fulltime(
         freelance_rate=request.freelance_hourly_rate,
-        freelance_hours=request.expected_billable_hours,
+        billable_hours=request.expected_billable_hours,
         fulltime_salary=request.fulltime_annual_salary,
         benefits_value=request.benefits_value,
         freelance_expenses=request.freelance_annual_expenses,
@@ -254,6 +259,6 @@ def calculate_freelance_vs_fulltime(request: FreelanceVsFulltimeRequest) -> Free
         cta={
             "title": "Manage Your Freelance Business",
             "description": "Track income, expenses, and taxes all in one place.",
-            "url": settings.get_signup_url("freelance-growth", "freelance-vs-fulltime"),
+            "url": settings.get_signup_url("freelancer-dealflow", "freelance-vs-fulltime"),
         },
     )

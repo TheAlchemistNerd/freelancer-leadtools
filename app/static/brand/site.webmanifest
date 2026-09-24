@@ -1,0 +1,21 @@
+{
+  "name": "OSFreelance",
+  "short_name": "OSFreelance",
+  "description": "Practical tools for independent work.",
+  "icons": [
+    {
+      "src": "/tool-assets/brand/favicon-32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/tool-assets/brand/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ],
+  "background_color": "#F6F4EF",
+  "theme_color": "#145C50",
+  "display": "standalone",
+  "start_url": "/tools"
+}

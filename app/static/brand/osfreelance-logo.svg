@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 770 160" role="img" aria-labelledby="title desc">
+  <title id="title">OSFreelance</title>
+  <desc id="desc">The OSFreelance wordmark with its teal, warm-paper and ochre monogram.</desc>
+  <rect x="0" y="0" width="160" height="160" rx="37" fill="#145C50"/>
+  <circle cx="57" cy="80" r="27" fill="none" stroke="#F6F4EF" stroke-width="11"/>
+  <path d="M107 57c-9-5-21-3-25 5-5 10 6 15 17 19 12 4 19 10 15 19-5 10-18 12-30 7" fill="none" stroke="#E8B85C" stroke-linecap="round" stroke-linejoin="round" stroke-width="11"/>
+  <text x="194" y="96" fill="#172B2A" font-family="Segoe UI, Arial, sans-serif" font-size="71" font-weight="800" letter-spacing="-3">OS</text>
+  <text x="286" y="96" fill="#172B2A" font-family="Segoe UI, Arial, sans-serif" font-size="71" font-weight="600" letter-spacing="-3">Freelance</text>
+</svg>

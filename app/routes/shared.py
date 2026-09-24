@@ -24,105 +24,80 @@ from app.schemas import (
     TimeValueResponse,
 )
 from app.services import calculators
+from app.services import scenarios
 
 router = APIRouter()
 
 
+@router.post("/cost-of-living", response_model=RateCalculatorResponse,
+             summary="Cost-of-living rate scenario")
 @router.post(
-    "/rate-ppp",
+    "/rate-ppp", deprecated=True,
     response_model=RateCalculatorResponse,
-    summary="Rate Calculator with PPP Adjustment",
-    description="Calculate location-adjusted rates using Purchasing Power Parity.",
+    summary="Cost-of-living rate scenario (legacy PPP URL)",
+    description="Explore a user-supplied cost ratio, not official PPP or recommended market pricing.",
 )
 def calculate_rate_ppp(request: RateCalculatorRequest) -> RateCalculatorResponse:
-    """
-    Calculate PPP-adjusted rates.
-
-    **CTA:** Based on user type → freelance-growth or freelancer-dealflow
-    """
-    result = calculators.calculate_ppp_adjusted_rate(
-        base_rate=request.base_rate,
-        base_country=request.base_country,
-        target_country=request.target_country,
-        user_type=request.user_type,  # "individual" or "agency"
-    )
-    product = "freelance-growth" if request.user_type == "individual" else "freelancer-dealflow"
     return RateCalculatorResponse(
-        adjusted_rate=result["adjusted_rate"],
-        ppp_multiplier=result["ppp_multiplier"],
-        local_market_rate=result["local_market_rate"],
-        recommendation=result["recommendation"],
-        cta={
-            "title": "Track Your Rates Over Time" if request.user_type == "individual" else "Track Agency Rates",
-            "description": "Monitor your rates, adjust for inflation, and stay competitive.",
-            "url": settings.get_signup_url(product, "rate-ppp"),
-        },
+        adjusted_rate=scenarios.cost_scenario(request.base_rate, request.cost_ratio),
+        ppp_multiplier=request.cost_ratio,
+        currency=request.currency,
+        recommendation="Use this as a personal planning scenario, not a client-rate recommendation.",
+        assumptions=["Ratio supplied by you; no country dataset is queried.",
+                     "Both costs must use the same currency and period. Output stays in the input currency.",
+                     "Legacy ppp_multiplier field contains your cost ratio, not verified PPP."],
+        formula_version="cost-ratio-v1",
+        cta={"title": "Plan a project price", "description": "Carry your assumptions into an estimate.",
+             "url": settings.get_signup_url("freelancer-dealflow", "rate-ppp")},
     )
 
 
+
+@router.post("/tax-reserve", response_model=TaxEstimatorResponse,
+             summary="Tax reserve planner")
 @router.post(
-    "/tax-estimator",
+    "/tax-estimator", deprecated=True,
     response_model=TaxEstimatorResponse,
-    summary="Freelancer Tax Estimator",
-    description="Estimate quarterly taxes based on income and expenses.",
+    summary="Tax reserve planner",
+    description="Budget a reserve using your selected percentage; does not calculate statutory tax liability.",
 )
 def calculate_tax(request: TaxEstimatorRequest) -> TaxEstimatorResponse:
-    """
-    Estimate quarterly taxes.
-
-    **CTA:** "Track business expenses" → appropriate product
-    """
-    result = calculators.estimate_taxes(
-        annual_income=request.annual_income,
-        business_expenses=request.business_expenses,
-        country=request.country,
-        user_type=request.user_type,
-    )
-    product = "freelance-growth" if request.user_type == "individual" else "freelancer-dealflow"
+    reserve, quarterly, effective = scenarios.tax_reserve(
+        request.annual_income, request.business_expenses, request.reserve_rate_percent)
     return TaxEstimatorResponse(
-        estimated_tax=result["estimated_tax"],
-        effective_rate=result["effective_rate"],
-        quarterly_payment=result["quarterly_payment"],
-        deductions=result["common_deductions"],
-        cta={
-            "title": "Track Business Expenses",
-            "description": "Categorize expenses, track deductions, and prepare for tax season.",
-            "url": settings.get_signup_url(product, "tax"),
-        },
+        estimated_tax=reserve, quarterly_payment=quarterly, effective_rate=effective,
+        common_deductions=[], currency=request.currency, formula_version="tax-reserve-v1",
+        assumptions=["Your reserve percentage is applied to positive income minus entered expenses.",
+                     "Expenses are not verified as tax-deductible; country does not select tax rules.",
+                     "Quarterly amount is one quarter of the annual reserve, not a statutory deadline or payment.",
+                     "Legacy estimated_tax field is a budget reserve, not tax owed. Confirm liability with local guidance."],
+        cta={"title": "Plan business cash", "description": "Keep your reserve visible in your business planning.",
+             "url": settings.get_signup_url("freelancer-dealflow", "tax")},
     )
+
 
 
 @router.post(
     "/retirement",
     response_model=RetirementPlannerResponse,
     summary="Freelancer Retirement Planner",
-    description="Plan for retirement as a self-employed professional.",
+    description="Explore retirement funding using explicitly supplied return, inflation and withdrawal assumptions.",
 )
 def calculate_retirement(request: RetirementPlannerRequest) -> RetirementPlannerResponse:
-    """
-    Plan retirement savings.
-
-    **CTA:** "Plan long-term finances" → appropriate product
-    """
-    result = calculators.plan_retirement(
-        current_age=request.current_age,
-        retirement_age=request.retirement_age,
-        current_savings=request.current_retirement_savings,
-        annual_income=request.annual_income,
-        desired_replacement_rate=request.desired_replacement_rate,
-    )
-    product = "freelance-growth" if request.user_type == "individual" else "freelancer-dealflow"
+    result = scenarios.retirement_scenario(
+        request.current_age, request.retirement_age, request.current_retirement_savings,
+        request.annual_income, request.desired_replacement_rate, request.annual_return_percent,
+        request.inflation_percent, request.withdrawal_rate_percent)
     return RetirementPlannerResponse(
-        monthly_contribution=result["monthly_contribution"],
-        annual_contribution=result["annual_contribution"],
-        projected_total=result["projected_total"],
-        shortfall=result["shortfall"],
-        cta={
-            "title": "Plan Your Financial Future",
-            "description": "Track income, set aside retirement funds, and plan for the future.",
-            "url": settings.get_signup_url(product, "retirement"),
-        },
+        **result, currency=request.currency, formula_version="retirement-real-annuity-v1",
+        assumptions=["All amounts are in today's purchasing power.",
+                     "Constant effective annual return and inflation; contributions at month end increase with inflation.",
+                     "Target equals desired annual income divided by your withdrawal rate; that rate is not guaranteed safe.",
+                     "No taxes, fees, pensions or variable-return risk modeled. Shortfall is before new contributions."],
+        cta={"title": "Review your business income", "description": "Use this scenario alongside your own financial advice.",
+             "url": settings.get_signup_url("freelancer-dealflow", "retirement")},
     )
+
 
 
 @router.post(
@@ -147,7 +122,7 @@ def calculate_time_value(request: TimeValueRequest) -> TimeValueResponse:
     return TimeValueResponse(
         opportunity_cost=result["opportunity_cost"],
         recommendation=result["recommendation"],
-        roi_of_outsourcing=result["roi"],
+        roi=result["roi"],
         cta={
             "title": "Optimize Your Time",
             "description": "Track where your time goes and focus on high-value activities.",

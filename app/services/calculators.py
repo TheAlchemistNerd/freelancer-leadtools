@@ -70,6 +70,7 @@ def calculate_skill_gap(
     target_role: str,
     current_skills: list[str],
     experience_level: str,
+    target_skills: list[str] | None = None,
 ) -> dict:
     """
     Identify skill gaps for target role.
@@ -86,15 +87,25 @@ def calculate_skill_gap(
     }
 
     # Find matching template
-    target_lower = target_role.lower()
+    target_lower = target_role.lower().replace(" ", "").replace("-", "")
     matched_skills = []
     for role, skills in templates.items():
         if role in target_lower:
             matched_skills = skills
             break
 
+    if target_skills:
+        matched_skills = list(dict.fromkeys(s.lower().strip() for s in target_skills if s.strip()))
+
     if not matched_skills:
-        matched_skills = templates["fullstack"]  # Default
+        return {
+            "normalized_skills": [s.lower().strip() for s in current_skills],
+            "gaps": [],
+            "roadmap": ["List 1-3 capabilities required by a real project in target_skills.",
+                        "Choose a small deliverable that demonstrates one capability.",
+                        "Record feedback and evidence in DevLog, then reassess the remaining gaps."],
+            "resources": [],
+        }
 
     # Normalize current skills
     normalized = [s.lower().strip() for s in current_skills]
@@ -123,7 +134,15 @@ def calculate_skill_gap(
         ]
 
     # Suggested resources
-    resources = [f"https://example.com/learn/{gap}" for gap in gaps[:4]]
+    # Small editorial catalog, checked 2026-09-19. These are starting references,
+    # not a claim that every missing skill has a complete learning curriculum.
+    catalog = {
+        "python": "https://docs.python.org/3/tutorial/",
+        "javascript": "https://developer.mozilla.org/en-US/docs/Learn_web_development",
+        "css": "https://developer.mozilla.org/en-US/docs/Learn_web_development",
+        "sql": "https://www.postgresql.org/docs/current/tutorial.html",
+    }
+    resources = list(dict.fromkeys(catalog[gap] for gap in gaps if gap in catalog))
 
     return {
         "normalized_skills": sorted(normalized),
@@ -261,6 +280,8 @@ def calculate_scope_creep(
     hours_per_request: float,
     hourly_rate: float,
     delay_days: int,
+    displaced_billable_hours: float = 0,
+    currency: str = "USD",
 ) -> dict:
     """
     Calculate scope creep cost.
@@ -271,7 +292,7 @@ def calculate_scope_creep(
     direct = extra_requests * hours_per_request * hourly_rate
 
     # Delay cost (opportunity cost)
-    delay_cost = delay_days * (hourly_rate * 2)  # 2x for opportunity cost
+    delay_cost = displaced_billable_hours * hourly_rate
 
     # Total
     total = direct + delay_cost
@@ -281,7 +302,7 @@ def calculate_scope_creep(
         "Thanks for sharing these additional requirements. "
         "I've reviewed them and they represent a significant scope expansion. "
         "Here are your options:\n\n"
-        f"1. **Change Order**: Add ${direct:,.0f} to the project budget\n"
+        f"1. **Change Order**: Add {currency} {direct:,.2f} to the project budget\n"
         f"2. **Phase Split**: Move new items to Phase 2\n"
         f"3. **Timeline Extension**: Extend deadline by {delay_days} days\n\n"
         "Let me know which approach works best for you."
@@ -292,6 +313,10 @@ def calculate_scope_creep(
         "delay_cost": round(delay_cost, 2),
         "total_cost": round(total, 2),
         "boundary_message": boundary_message,
+        "currency": currency,
+        "assumptions": ["Delay days do not automatically imply lost revenue.",
+                        "Opportunity cost uses only supplied displaced billable hours; avoid double counting.",
+                        "Only direct additional work is included in the proposed change-order amount."],
     }
 
 
@@ -326,11 +351,7 @@ def calculate_hourly_rate(
     }
 
     # Market range (based on typical freelance rates)
-    market_range = {
-        "junior": max(hourly_rate * 0.6, 25),
-        "mid": hourly_rate,
-        "senior": min(hourly_rate * 1.8, 300),
-    }
+    market_range = {}  # This is a personal rate floor, not market research.
 
     return {
         "hourly_rate": round(hourly_rate, 2),
@@ -389,11 +410,11 @@ def calculate_agency_profit(
     """Calculate agency profit margin."""
     gross_profit = revenue - salaries
     operating_profit = gross_profit - overhead
-    net_profit = operating_profit * (1 - tax_rate / 100)
+    net_profit = operating_profit - max(0, operating_profit) * tax_rate / 100
     margin = (net_profit / revenue) * 100 if revenue > 0 else 0
 
     # Industry benchmark (typical agency margins: 10-20%)
-    benchmark = 15.0
+    benchmark = None  # No verified industry dataset.
 
     return {
         "gross_profit": round(gross_profit, 2),
@@ -408,18 +429,20 @@ def calculate_utilization(
     billable_count: int,
     available_hours: float,
     tracked_billable: float,
+    target_percent: float = 75,
+    hourly_rate: float | None = None,
 ) -> dict:
     """Calculate team utilization rate."""
     total_available = team_size * available_hours
     utilization = (tracked_billable / total_available) * 100 if total_available > 0 else 0
 
     # Industry benchmark (typical: 70-80%)
-    benchmark = 75.0
+    benchmark = target_percent  # User-editable scenario, not an industry statistic.
 
     # Lost revenue calculation
     target_billable = total_available * (benchmark / 100)
     lost_hours = target_billable - tracked_billable
-    lost_revenue = max(0, lost_hours * 100)  # Assuming $100/hr average
+    lost_revenue = round(max(0, lost_hours) * hourly_rate, 2) if hourly_rate is not None else None
 
     # Recommendations
     recommendations = []
@@ -433,7 +456,7 @@ def calculate_utilization(
     return {
         "utilization_percent": round(utilization, 2),
         "benchmark": benchmark,
-        "lost_revenue": round(lost_revenue, 2),
+        "lost_revenue": lost_revenue,
         "recommendations": recommendations,
     }
 
@@ -467,7 +490,7 @@ def calculate_proposal_win_rate(
     value_win_rate = (value_won / value_sent) * 100 if value_sent > 0 else 0
 
     # Industry benchmark (typical: 25-40%)
-    benchmark = 33.0
+    benchmark = None  # No verified industry dataset.
 
     # Recommendations
     recommendations = []
@@ -540,6 +563,7 @@ def forecast_cash_flow(
 def calculate_break_even(
     fixed_costs: float,
     margin_percent: float,
+    average_project_value: float | None = None,
 ) -> dict:
     """Calculate break-even point."""
     # Break-even revenue = Fixed Costs / Margin %
@@ -547,15 +571,15 @@ def calculate_break_even(
     break_even_revenue = fixed_costs / margin_decimal if margin_decimal > 0 else float('inf')
 
     # Projects needed (assuming average project)
-    avg_project = break_even_revenue * margin_decimal / 3  # Rough estimate
-    projects_needed = break_even_revenue / avg_project if avg_project > 0 else 0
+    from math import ceil
+    projects_needed = ceil(break_even_revenue / average_project_value) if average_project_value else None
 
     # Daily target
     daily_target = break_even_revenue / 22  # Working days
 
     return {
         "monthly_revenue": round(break_even_revenue, 2),
-        "projects_needed": round(projects_needed, 1),
+        "projects_needed": projects_needed,
         "daily_revenue": round(daily_target, 2),
     }
 
@@ -565,130 +589,7 @@ def calculate_break_even(
 # =============================================================================
 
 
-# PPP multipliers by country tier
-PPP_MULTIPLIERS = {
-    # Tier 0 (1.0x) - US, UK, CA, AU, DE, FR, JP
-    "US": 1.0, "GB": 1.0, "CA": 1.0, "AU": 1.0, "DE": 1.0, "FR": 1.0, "JP": 1.0,
-    # Tier 1 (0.7x) - IT, ES, PT, GR, KR, TW
-    "IT": 0.7, "ES": 0.7, "PT": 0.7, "GR": 0.7, "KR": 0.7, "TW": 0.7,
-    # Tier 2 (0.5x) - PL, CZ, BR, MX, AR, CL
-    "PL": 0.5, "CZ": 0.5, "BR": 0.5, "MX": 0.5, "AR": 0.5, "CL": 0.5,
-    # Tier 3 (0.3x) - IN, PH, VN, ID, PK, NG
-    "IN": 0.3, "PH": 0.3, "VN": 0.3, "ID": 0.3, "PK": 0.3, "NG": 0.3,
-    # Tier 4 (0.2x) - UA, EG, MA, NP, LK
-    "UA": 0.2, "EG": 0.2, "MA": 0.2, "NP": 0.2, "LK": 0.2,
-}
-
-
-def calculate_ppp_adjusted_rate(
-    base_rate: float,
-    base_country: str,
-    target_country: str,
-    user_type: str,
-) -> dict:
-    """Calculate PPP-adjusted rate."""
-    base_multiplier = PPP_MULTIPLIERS.get(base_country.upper(), 1.0)
-    target_multiplier = PPP_MULTIPLIERS.get(target_country.upper(), 1.0)
-
-    # PPP adjustment
-    ppp_multiplier = target_multiplier / base_multiplier if base_multiplier > 0 else 1.0
-    adjusted_rate = base_rate * ppp_multiplier
-
-    # Local market rate (typical range)
-    local_market = {
-        "low": adjusted_rate * 0.7,
-        "high": adjusted_rate * 1.3,
-    }
-
-    # Recommendation
-    if user_type == "individual":
-        recommendation = f"Consider charging ${adjusted_rate:.0f}/hr for {target_country} clients"
-    else:
-        recommendation = f"Adjust agency rates to ${adjusted_rate:.0f}/hr for {target_country} market"
-
-    return {
-        "adjusted_rate": round(adjusted_rate, 2),
-        "ppp_multiplier": round(ppp_multiplier, 3),
-        "local_market_rate": local_market,
-        "recommendation": recommendation,
-    }
-
-
-def estimate_taxes(
-    annual_income: float,
-    expenses: float,
-    country: str,
-    user_type: str,
-) -> dict:
-    """Estimate quarterly taxes (simplified)."""
-    taxable_income = annual_income - expenses
-
-    # Simplified tax rates by country
-    tax_rates = {
-        "US": 0.25,  # Self-employment + income tax estimate
-        "GB": 0.27,
-        "CA": 0.23,
-        "AU": 0.29,
-        "DE": 0.30,
-    }
-
-    rate = tax_rates.get(country.upper(), 0.25)
-    estimated_tax = taxable_income * rate
-    effective_rate = (estimated_tax / annual_income) * 100 if annual_income > 0 else 0
-    quarterly = estimated_tax / 4
-
-    # Common deductions
-    deductions = [
-        "Home office expense",
-        "Equipment and software",
-        "Professional development",
-        "Health insurance premiums",
-        "Retirement contributions",
-    ]
-
-    return {
-        "estimated_tax": round(estimated_tax, 2),
-        "effective_rate": round(effective_rate, 2),
-        "quarterly_payment": round(quarterly, 2),
-        "common_deductions": deductions,
-    }
-
-
-def plan_retirement(
-    current_age: int,
-    retirement_age: int,
-    current_savings: float,
-    annual_income: float,
-    replacement_rate: float,
-) -> dict:
-    """Plan retirement savings."""
-    years_to_retire = retirement_age - current_age
-    annual_needed = annual_income * replacement_rate
-
-    # Assume 7% annual return, 3% inflation (net 4%)
-    net_return = 0.04
-
-    # Future value of current savings
-    future_current = current_savings * ((1 + net_return) ** years_to_retire)
-
-    # Total needed (25x annual for 4% withdrawal rate)
-    total_needed = annual_needed * 25
-
-    # Shortfall
-    shortfall = total_needed - future_current
-
-    # Monthly contribution needed
-    if years_to_retire > 0 and shortfall > 0:
-        monthly = shortfall / years_to_retire / 12
-    else:
-        monthly = 0
-
-    return {
-        "monthly_contribution": round(max(0, monthly), 2),
-        "annual_contribution": round(max(0, monthly * 12), 2),
-        "projected_total": round(future_current, 2),
-        "shortfall": round(max(0, shortfall), 2),
-    }
+# Cost, tax-reserve and retirement scenarios live in scenarios.py.
 
 
 def calculate_time_value(

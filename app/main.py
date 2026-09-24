@@ -21,9 +21,15 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from app.routes.web import router as web_router
+from app.routes.workspace import router as workspace_router
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from freelancer_core.reliability.validation import safe_validation_error
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 
@@ -60,7 +66,7 @@ async def lifespan(app: FastAPI):
     if settings.is_development:
         init_db()
         logger.info("Development database schema initialized")
-    elif "leads" not in inspect(engine).get_table_names():
+    elif not {"leads", "reference_datasets", "reference_import_runs", "reference_observations"}.issubset(set(inspect(engine).get_table_names())):
         raise RuntimeError("LeadTools database is not migrated; run 'alembic upgrade head'")
     
     logger.info(f"Environment: {settings.environment}")
@@ -98,6 +104,7 @@ def create_app() -> FastAPI:
             {"name": "agencies", "description": "Calculators for agencies"},
             {"name": "shared", "description": "Calculators for both"},
             {"name": "leads", "description": "Lead capture endpoints"},
+            {"name": "reference-data", "description": "Versioned external reference observations"},
             {"name": "health", "description": "Health checks"},
         ],
     )
@@ -116,11 +123,16 @@ def create_app() -> FastAPI:
     # No cookie-authenticated state is used, so CSRF tokens are not required.
     app.add_middleware(RequestSizeLimitMiddleware)
     app.add_middleware(BotProtectionMiddleware)
-    app.add_middleware(XSSProtectionMiddleware)
+    # Passwords are opaque credentials, not HTML; never pattern-filter them.
+    app.add_middleware(XSSProtectionMiddleware, excluded_paths=("/workspace/login", "/workspace/register"))
     app.add_middleware(SecurityHeadersMiddleware)
 
     # Include router
     app.include_router(api_router)
+    app.include_router(web_router)
+    app.include_router(workspace_router)
+    app.add_exception_handler(RequestValidationError, safe_validation_error)
+    app.mount("/tool-assets", StaticFiles(directory=Path(__file__).resolve().parent / "static"), name="tool-assets")
 
     # Health check
     @app.get("/healthz", tags=["health"])

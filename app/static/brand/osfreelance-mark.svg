@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">OSFreelance mark</title>
+  <desc id="desc">A deep teal rounded square containing an O in warm paper and an ochre S.</desc>
+  <rect width="256" height="256" rx="58" fill="#145C50"/>
+  <circle cx="91" cy="128" r="43" fill="none" stroke="#F6F4EF" stroke-width="17"/>
+  <path d="M171 92c-14-8-34-5-40 8-7 16 10 24 27 29 19 6 30 16 23 31-7 15-29 20-47 11" fill="none" stroke="#E8B85C" stroke-linecap="round" stroke-linejoin="round" stroke-width="17"/>
+</svg>

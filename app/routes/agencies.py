@@ -48,7 +48,7 @@ def calculate_agency_profit(request: AgencyProfitRequest) -> AgencyProfitRespons
         revenue=request.annual_revenue,
         salaries=request.total_salaries,
         overhead=request.annual_overhead,
-        taxes=request.effective_tax_rate,
+        tax_rate=request.effective_tax_rate,
     )
     return AgencyProfitResponse(
         gross_profit=result["gross_profit"],
@@ -76,14 +76,16 @@ def calculate_utilization(request: UtilizationRequest) -> UtilizationResponse:
     **CTA:** "Optimize team capacity" → freelancer-dealflow
     """
     result = calculators.calculate_utilization(
-        total_team_size=request.total_team_size,
-        billable_employees=request.billable_team_members,
+        team_size=request.total_team_size,
+        billable_count=request.billable_team_members,
         available_hours=request.available_hours_per_week,
         tracked_billable=request.tracked_billable_hours,
+        target_percent=request.target_utilization_percent,
+        hourly_rate=request.average_hourly_rate,
     )
     return UtilizationResponse(
         utilization_percent=result["utilization_percent"],
-        industry_benchmark=result["benchmark"],
+        benchmark=result["benchmark"],
         lost_revenue=result["lost_revenue"],
         recommendations=result["recommendations"],
         cta={
@@ -115,7 +117,7 @@ def calculate_client_ltv(request: ClientLtvRequest) -> ClientLtvResponse:
     return ClientLtvResponse(
         lifetime_value=result["ltv"],
         annual_value=result["annual_value"],
-        referral_component=result["referral_value"],
+        referral_value=result["referral_value"],
         cta={
             "title": "Manage Client Relationships",
             "description": "Track client history, identify your best clients, and nurture relationships.",
@@ -137,15 +139,15 @@ def calculate_proposal_win_rate(request: ProposalWinRateRequest) -> ProposalWinR
     **CTA:** "Improve proposals with AI" → freelancer-dealflow
     """
     result = calculators.calculate_proposal_win_rate(
-        proposals_sent=request.proposals_sent,
-        proposals_won=request.proposals_won,
-        total_value_sent=request.total_value_sent,
-        total_value_won=request.total_value_won,
+        sent=request.proposals_sent,
+        won=request.proposals_won,
+        value_sent=request.total_value_sent,
+        value_won=request.total_value_won,
     )
     return ProposalWinRateResponse(
-        win_rate_percent=result["win_rate"],
+        win_rate=result["win_rate"],
         value_win_rate=result["value_win_rate"],
-        industry_benchmark=result["benchmark"],
+        benchmark=result["benchmark"],
         recommendations=result["recommendations"],
         cta={
             "title": "Improve Proposals with AI",
@@ -176,7 +178,7 @@ def calculate_cash_flow(request: CashFlowRequest) -> CashFlowResponse:
     )
     return CashFlowResponse(
         forecast=result["forecast"],
-        runway_months=result["runway"],
+        runway=result["runway"],
         risk_level=result["risk_level"],
         recommendations=result["recommendations"],
         cta={
@@ -201,12 +203,13 @@ def calculate_break_even(request: BreakEvenRequest) -> BreakEvenResponse:
     """
     result = calculators.calculate_break_even(
         fixed_costs=request.monthly_fixed_costs,
-        avg_project_margin=request.average_project_margin_percent,
+        margin_percent=request.average_project_margin_percent,
+        average_project_value=request.average_project_value,
     )
     return BreakEvenResponse(
-        monthly_break_even=result["monthly_revenue"],
+        monthly_revenue=result["monthly_revenue"],
         projects_needed=result["projects_needed"],
-        daily_target=result["daily_revenue"],
+        daily_revenue=result["daily_revenue"],
         cta={
             "title": "Track Agency Metrics",
             "description": "Monitor all your agency KPIs in one dashboard.",

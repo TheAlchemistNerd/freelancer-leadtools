@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = False
     environment: str = "development"  # development, staging, production
+    # Optional same-origin browser gateway. Tokens stay in private Redis.
+    web_public_origin: str = "http://127.0.0.1:8091"
+    identity_api_url: str = ""
+    workspace_dealflow_url: str = ""
 
     # ======================================================================
     # Server Settings
@@ -140,6 +144,11 @@ class Settings(BaseSettings):
     # ======================================================================
     redis_url: str = ""  # Empty = no caching
     cache_ttl_seconds: int = 3600
+
+    # Versioned external reference data, refreshed only by an explicit job.
+    reference_data_countries: str = "KEN,USA,GBR"
+    reference_data_max_age_days: int = 500
+    reference_data_timeout_seconds: float = 20.0
 
     # ======================================================================
     # Feature Flags

@@ -86,7 +86,7 @@ class LeadAnalyticsResponse(BaseModel):
     """Lead analytics."""
     total_leads: int
     leads_by_source: dict[str, int]
-    conversion_rate: float
+    conversion_rate: float | None
 
 
 class ActionBriefRequest(BaseModel):
@@ -231,7 +231,7 @@ async def get_lead_analytics(
     return LeadAnalyticsResponse(
         total_leads=stats.get("total_leads", 0),
         leads_by_source=stats.get("leads_by_source", {}),
-        conversion_rate=0.0,  # Needs unified CRM loop validation
+        conversion_rate=None,  # Not measured; unknown is not zero.
     )
 
 

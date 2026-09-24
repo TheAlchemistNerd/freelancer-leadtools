@@ -19,7 +19,7 @@ GROWTH_SOURCES = {
     "burnout_calculator",
     "skill_gap_scanner",
     "portfolio_score",
-    "freelance_vs_fulltime",
+    "time_value_calculator",
 }
 
 SOURCE_ACTIONS: dict[str, list[str]] = {
