@@ -1,4 +1,5 @@
 import json
+from uuid import uuid4
 from unittest.mock import AsyncMock
 
 import httpx
@@ -173,3 +174,106 @@ def test_proposal_gateway_keeps_tokens_and_tracking_data_server_side(gateway):
     assert listing.json()["items"] == [response.json()]
     assert "secret-tracker" not in listing.text
     assert upstream.request.call_args.kwargs["params"] == {"page": 1, "size": 20}
+
+
+def document_payload():
+    return {
+        "request_id": str(uuid4()), "template": "contract-v1", "format": "pdf",
+        "title": "Synthetic agreement", "client_name": "Example client",
+        "author_name": "Jane", "sections": [{"heading": "Scope", "body": "Synthetic work."}],
+    }
+
+
+def test_document_studio_requires_session_and_uses_branded_page(gateway):
+    client, upstream, _, _ = gateway
+    page = client.get("/workspace")
+    assert page.status_code == 200
+    assert 'id="document-form"' in page.text
+    assert 'id="draft-review"' in page.text
+    assert "OpenRouter" in page.text
+    assert "private-token" not in page.text
+    assert client.get("/workspace/documents/jobs").status_code == 401
+    assert client.post("/workspace/documents/jobs", json=document_payload()).status_code == 401
+    upstream.request.assert_not_called()
+
+
+def test_manual_document_gateway_forwards_only_validated_content(gateway):
+    client, upstream, _, _ = gateway
+    assert sign_in(client).status_code == 200
+    payload = document_payload()
+    upstream.request.return_value = httpx.Response(202, json={
+        "id": str(uuid4()), "status": "queued", "kind": "render", "format": "pdf",
+    })
+    response = client.post("/workspace/documents/jobs", json=payload)
+    assert response.status_code == 202
+    assert response.headers["cache-control"] == "no-store"
+    assert upstream.request.call_args.args[:2] == (
+        "POST", "http://127.0.0.1:8101/api/v1/documents/jobs")
+    assert upstream.request.call_args.kwargs["headers"] == {
+        "Authorization": "Bearer private-token"}
+    assert upstream.request.call_args.kwargs["json"] == payload
+    upstream.request.reset_mock()
+    assert client.post("/workspace/documents/jobs", json={**payload, "tenant_id": str(uuid4())}).status_code == 422
+    assert client.post("/workspace/documents/jobs", headers={"Origin": "https://evil.example"},
+                       json=payload).status_code == 403
+    upstream.request.assert_not_called()
+
+
+def test_openrouter_draft_review_and_acceptance_keep_provider_key_server_side(gateway):
+    client, upstream, _, _ = gateway
+    assert sign_in(client).status_code == 200
+    job_id = str(uuid4())
+    payload = {"document": document_payload(), "brief": "Summarize this synthetic scope.",
+               "consent_to_provider": True}
+    upstream.request.return_value = httpx.Response(202, json={"id": job_id, "status": "queued"})
+    response = client.post("/workspace/documents/drafts", json=payload)
+    assert response.status_code == 202
+    forwarded = upstream.request.call_args.kwargs["json"]
+    assert forwarded["provider"] == "openrouter"
+    assert forwarded["brief"] == payload["brief"]
+    assert "api_key" not in json.dumps(forwarded).lower()
+    upstream.request.reset_mock()
+    assert client.post("/workspace/documents/drafts",
+                       json={**payload, "consent_to_provider": False}).status_code == 422
+    upstream.request.assert_not_called()
+
+    digest = "a" * 64
+    upstream.request.return_value = httpx.Response(200, json={
+        "id": job_id, "status": "completed", "sha256": digest,
+        "draft": {"summary": "Synthetic introduction", "missing_information": ["Client deadline"]},
+        "document": {"client_name": "private upstream snapshot"},
+        "provider_internal": "do not expose",
+    })
+    review = client.get(f"/workspace/documents/drafts/{job_id}")
+    assert review.status_code == 200
+    assert review.json()["draft"]["summary"] == "Synthetic introduction"
+    assert "document" not in review.json() and "provider_internal" not in review.json()
+
+    upstream.request.return_value = httpx.Response(202, json={"id": str(uuid4()), "approval_id": str(uuid4())})
+    accepted = client.post(f"/workspace/documents/drafts/{job_id}/accept",
+                           json={"sha256": digest, "acknowledge_missing_information": True})
+    assert accepted.status_code == 202
+    assert upstream.request.call_args.kwargs["json"]["sha256"] == digest
+
+
+def test_document_download_filters_upstream_type_and_filename(gateway):
+    client, upstream, _, _ = gateway
+    assert sign_in(client).status_code == 200
+    job_id = uuid4()
+    upstream.request.return_value = httpx.Response(
+        200, content=b"%PDF-synthetic", headers={
+            "content-type": "application/pdf",
+            "content-disposition": 'attachment; filename="evil.html"',
+        },
+    )
+    downloaded = client.get(f"/workspace/documents/jobs/{job_id}/download")
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"%PDF-synthetic"
+    assert downloaded.headers["cache-control"] == "no-store"
+    assert downloaded.headers["content-disposition"] == f'attachment; filename="document-{job_id}.pdf"'
+    assert upstream.request.call_args.kwargs["headers"] == {
+        "Authorization": "Bearer private-token"}
+    upstream.request.return_value = httpx.Response(200, content=b"<script>bad</script>",
+                                                  headers={"content-type": "text/html"})
+    assert client.get(f"/workspace/documents/jobs/{job_id}/download").status_code == 503
+    assert client.get("/workspace/documents/jobs/../download").status_code in (404, 422)

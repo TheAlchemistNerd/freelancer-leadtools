@@ -48,6 +48,23 @@ passes only the server-held bearer token, and marks responses no-store. The UI
 renders saved content as text, labels it unverified and clears it on sign-out or
 account changes. Saved-result retrieval is not conversion into a proposal.
 
+## Document studio
+
+The branded `/workspace` now includes a document form and job list. A signed-in
+user can submit a validated `proposal-v1` or `contract-v1` structure for DOCX/PDF
+rendering, or explicitly consent to an OpenRouter-only introductory draft. The
+browser never receives provider or bearer credentials. A completed AI draft is
+shown as literal text with missing-information flags; acceptance sends its exact
+SHA-256 to DealFlow and queues rendering. A document created this way is a draft
+file, not an approved, sent or signed contract.
+
+The fixed-destination gateway proxies owner-scoped job status and a bounded
+download with a generated filename, allowed PDF/DOCX content types and no-store
+headers. The rendered file is held by DealFlow's document job until object
+storage and retention policies are finished. Session expiry requires sign-in
+again; jobs remain in the owner's list. Live OpenRouter connectivity and the
+post-render approval/signing flow are separate release gates.
+
 Unit tests use mocked upstreams/Redis. The browser workspace test mocks the gateway
 responses while exercising the actual calculator API. Neither proves the three
 services work together. Full PostgreSQL/Redis/JWT integration for account creation, sign-in, save, retrieve

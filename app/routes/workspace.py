@@ -2,12 +2,14 @@
 import hashlib
 import json
 import secrets
+from typing import Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from redis.exceptions import RedisError
 from freelancer_core.reliability.redis import RedisFactory
 from app.config import settings
@@ -111,6 +113,43 @@ class ProposalDraft(BaseModel):
     summary: str = Field(min_length=1, max_length=5000)
 
 
+class DocumentSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    heading: str = Field(min_length=1, max_length=160)
+    body: str = Field(min_length=1, max_length=10000)
+
+
+class DocumentSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+    template: Literal["proposal-v1", "contract-v1"]
+    format: Literal["docx", "pdf"]
+    title: str = Field(min_length=1, max_length=200)
+    client_name: str = Field(min_length=1, max_length=200)
+    author_name: str = Field(min_length=1, max_length=200)
+    sections: list[DocumentSection] = Field(min_length=1, max_length=20)
+
+    @field_validator("sections")
+    @classmethod
+    def bound_content(cls, sections):
+        if sum(len(section.body) for section in sections) > 50000:
+            raise ValueError("Document content exceeds 50000 characters")
+        return sections
+
+
+class AIDraftSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    document: DocumentSubmission
+    brief: str = Field(min_length=1, max_length=20000)
+    consent_to_provider: Literal[True]
+
+
+class DraftAcceptance(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    acknowledge_missing_information: bool = False
+
+
 def public_proposal(item: dict) -> dict:
     """Only browser-safe fields; never expose tracking tokens or raw content."""
     required = ("id", "title", "client_name", "status", "created_at")
@@ -147,8 +186,47 @@ async def workspace_page():
         '<label for="proposal-summary">Summary</label>'
         '<textarea id="proposal-summary" required maxlength="5000" rows="6"></textarea>'
         '<button type="submit">Save proposal draft</button></form>'
-        '<button id="workspace-signout" type="button">Sign out</button>'
-        '<h3>Your proposals</h3><ul id="proposal-list"></ul></section>'
+        '<h3>Your proposals</h3><ul id="proposal-list"></ul>'
+        '<section class="workspace-documents" aria-labelledby="documents-heading">'
+        '<p class="eyebrow">DOCUMENT STUDIO</p><h2 id="documents-heading">Prepare a document</h2>'
+        '<p>Create a proposal or contract file from your own text. An optional '
+        'OpenRouter draft adds an introduction for your review. Neither path '
+        'sends a contract, requests a signature or charges anyone.</p>'
+        '<form id="document-form">'
+        '<label for="document-template">Document type</label>'
+        '<select id="document-template"><option value="proposal-v1">Proposal</option>'
+        '<option value="contract-v1">Contract</option></select>'
+        '<label for="document-format">Export format</label>'
+        '<select id="document-format"><option value="pdf">PDF</option>'
+        '<option value="docx">Word DOCX</option></select>'
+        '<label for="document-title">Title</label>'
+        '<input id="document-title" required maxlength="200">'
+        '<label for="document-client">Client name</label>'
+        '<input id="document-client" required maxlength="200">'
+        '<label for="document-author">Your name</label>'
+        '<input id="document-author" required maxlength="200">'
+        '<label for="document-body">Scope or terms you wrote</label>'
+        '<textarea id="document-body" required maxlength="10000" rows="8"></textarea>'
+        '<label class="check-row" for="document-ai"><input id="document-ai" type="checkbox">'
+        ' Ask AI to draft an introduction</label>'
+        '<div id="document-ai-fields" hidden>'
+        '<label for="document-brief">Brief for OpenRouter</label>'
+        '<textarea id="document-brief" maxlength="20000" rows="5"></textarea>'
+        '<label class="check-row" for="document-consent">'
+        '<input id="document-consent" type="checkbox"> I consent to sending this brief '
+        'to OpenRouter for this draft.</label>'
+        '<p>Keep secrets and sensitive client details out of the brief. AI cannot '
+        'set prices, deadlines or legal terms; you remain responsible for review.</p></div>'
+        '<button type="submit">Prepare document</button></form>'
+        '<p id="document-status" role="status" aria-live="polite"></p>'
+        '<section id="draft-review" class="result" aria-labelledby="draft-review-heading" hidden>'
+        '<h3 id="draft-review-heading">Review AI introduction</h3>'
+        '<p id="draft-summary"></p><ul id="draft-missing"></ul>'
+        '<label class="check-row" for="draft-acknowledge" id="draft-acknowledge-row" hidden>'
+        '<input id="draft-acknowledge" type="checkbox"> I reviewed the missing information.</label>'
+        '<button id="draft-accept" type="button">Accept and render this version</button>'
+        '</section><h3>Your document jobs</h3><ul id="document-list"></ul></section>'
+        '<button id="workspace-signout" type="button">Sign out</button></section>'
         '<p id="workspace-page-status" role="status" aria-live="polite"></p>'
         '<script defer src="/tool-assets/workspace.js"></script>',
     )
@@ -244,3 +322,95 @@ async def create_proposal(payload: ProposalDraft, response: Response,
     )
     response.headers["Cache-Control"] = "no-store"
     return public_proposal(result)
+
+
+def dealflow_url(path: str) -> str:
+    return settings.workspace_dealflow_url.rstrip("/") + "/api/v1/documents/" + path
+
+
+def bearer(auth: dict) -> dict[str, str]:
+    return {"Authorization": "Bearer " + auth["access_token"]}
+
+
+def private_response(response: Response, result: dict) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@router.post("/documents/jobs", status_code=202)
+async def submit_document(payload: DocumentSubmission, response: Response,
+                          auth=Depends(session), client=Depends(upstream)):
+    result = await call(client, "POST", dealflow_url("jobs"),
+                        headers=bearer(auth), json=payload.model_dump(mode="json"))
+    return private_response(response, result)
+
+
+@router.get("/documents/jobs")
+async def document_jobs(response: Response, auth=Depends(session), client=Depends(upstream)):
+    result = await call(client, "GET", dealflow_url("jobs"),
+                        headers=bearer(auth), params={"limit": 20, "offset": 0})
+    if not isinstance(result.get("items"), list):
+        raise HTTPException(503, "Workspace returned an invalid document list.")
+    return private_response(response, {"items": result["items"]})
+
+
+@router.get("/documents/jobs/{job_id}")
+async def document_job(job_id: UUID, response: Response,
+                       auth=Depends(session), client=Depends(upstream)):
+    result = await call(client, "GET", dealflow_url(f"jobs/{job_id}"), headers=bearer(auth))
+    return private_response(response, result)
+
+
+@router.get("/documents/jobs/{job_id}/download")
+async def document_download(job_id: UUID, auth=Depends(session), client=Depends(upstream)):
+    try:
+        result = await client.request("GET", dealflow_url(f"jobs/{job_id}/download"),
+                                      headers=bearer(auth))
+    except httpx.RequestError:
+        raise HTTPException(503, "Workspace service unavailable. Please retry.") from None
+    if result.status_code in (401, 403, 404, 409, 410):
+        raise HTTPException(result.status_code, "Document is unavailable or not ready.")
+    if result.status_code != 200 or len(result.content) > 5 * 1024 * 1024:
+        raise HTTPException(503, "Document download is unavailable.")
+    media = result.headers.get("content-type", "").split(";", 1)[0].strip()
+    extensions = {
+        "application/pdf": "pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    }
+    if media not in extensions:
+        raise HTTPException(503, "Document download has an unexpected format.")
+    return Response(
+        result.content, media_type=media,
+        headers={"Cache-Control": "no-store",
+                 "Content-Disposition": f'attachment; filename="document-{job_id}.{extensions[media]}"',
+                 "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.post("/documents/drafts", status_code=202)
+async def submit_ai_draft(payload: AIDraftSubmission, response: Response,
+                          auth=Depends(session), client=Depends(upstream)):
+    result = await call(
+        client, "POST", dealflow_url("drafts"), headers=bearer(auth),
+        json={**payload.model_dump(mode="json"), "provider": "openrouter"},
+    )
+    return private_response(response, result)
+
+
+@router.get("/documents/drafts/{job_id}")
+async def document_draft(job_id: UUID, response: Response,
+                         auth=Depends(session), client=Depends(upstream)):
+    result = await call(client, "GET", dealflow_url(f"drafts/{job_id}"), headers=bearer(auth))
+    # The upstream contains the owner's frozen document brief. Return only the
+    # review fields needed by this page, never worker or provider internals.
+    safe = {key: result[key] for key in
+            ("id", "status", "error_code", "draft", "sha256") if key in result}
+    return private_response(response, safe)
+
+
+@router.post("/documents/drafts/{job_id}/accept", status_code=202)
+async def accept_ai_draft(job_id: UUID, payload: DraftAcceptance, response: Response,
+                          auth=Depends(session), client=Depends(upstream)):
+    result = await call(client, "POST", dealflow_url(f"drafts/{job_id}/accept"),
+                        headers=bearer(auth), json=payload.model_dump())
+    return private_response(response, result)

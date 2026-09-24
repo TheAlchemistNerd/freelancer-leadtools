@@ -172,12 +172,50 @@ label {
   font-weight: 600;
 }
 
-input {
+input,
+select,
+textarea {
   width: 100%;
   padding: 12px;
   border: 1px solid #526361;
   border-radius: 6px;
   font: inherit;
+  background: white;
+}
+
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.check-row input {
+  width: auto;
+  margin-top: 7px;
+}
+
+.workspace-documents {
+  margin-top: 48px;
+  padding-top: 32px;
+  border-top: 1px solid #d8deda;
+}
+
+.workspace-documents > p {
+  max-width: 760px;
+}
+
+#document-list li {
+  margin: 12px 0;
+}
+
+#document-list button {
+  margin-left: 12px;
+  padding: 5px 10px;
+  font-size: 0.9rem;
+}
+
+#draft-review {
+  margin-top: 24px;
 }
 
 form button {
