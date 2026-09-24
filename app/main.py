@@ -11,8 +11,9 @@ SECURITY FEATURES:
 - Request size limits
 - Bot protection
 
-The API does not use cookie authentication, so browser CSRF tokens are not the
-primary control. Deployment CORS origins must still be explicit.
+The public calculator API is anonymous. The same-origin workspace gateway uses
+an HttpOnly session cookie and checks request origins; deployment CORS origins
+must still be explicit.
 
 Configuration is loaded from environment variables via app/config.py
 Copy .env.example to .env and update for your environment.
@@ -23,7 +24,7 @@ import logging
 import os
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
-from app.routes.web import router as web_router
+from app.routes.web import router as web_router, index as public_homepage
 from app.routes.workspace import router as workspace_router
 from contextlib import asynccontextmanager
 
@@ -155,30 +156,10 @@ def create_app() -> FastAPI:
                 content={"status": "degraded", "redis": "disconnected"},
             )
 
-    # Root endpoint
-    @app.get("/", tags=["health"], response_class=HTMLResponse)
+    # The public origin must open the actual OSFreelance site, not an API stub.
+    @app.get("/", include_in_schema=False, response_class=HTMLResponse)
     async def root():
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Freelancer LeadTools</title>
-            <meta name="robots" content="noindex, nofollow">
-        </head>
-        <body>
-            <h1>Freelancer LeadTools API</h1>
-            <p>Free calculators for freelancers and agencies</p>
-            <ul>
-                <li><a href="/docs">API Documentation</a></li>
-                <li><a href="/calculators/burnout">Burnout Calculator</a></li>
-                <li><a href="/calculators/rate">Rate Calculator</a></li>
-                <li><a href="/calculators/agency-profit">Agency Profit Calculator</a></li>
-                <li><a href="/healthz">Health Check</a></li>
-            </ul>
-            <p><small>Protected by rate limiting, XSS filtering, and security headers</small></p>
-        </body>
-        </html>
-        """
+        return public_homepage()
 
     # Custom exception handler
     @app.exception_handler(Exception)

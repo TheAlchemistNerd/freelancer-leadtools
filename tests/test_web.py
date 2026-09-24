@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from app.main import create_app
 from app.routes.web import router, TOOLS
 from app.routes.estimates import router as estimates
 
@@ -9,6 +10,17 @@ app = FastAPI()
 app.include_router(router)
 app.include_router(estimates, prefix="/calculators")
 client = TestClient(app)
+
+
+def test_public_origin_serves_brand_homepage_not_obsolete_api_stub():
+    response = TestClient(create_app()).get("/")
+
+    assert response.status_code == 200
+    assert "Make independent" in response.text
+    assert 'href="/">OS<span>Freelance</span>' in response.text
+    assert 'href="/tools/hourly-rate"' in response.text
+    assert "Freelancer LeadTools API" not in response.text
+    assert 'noindex, nofollow' not in response.text
 
 
 def test_index_and_all_tool_forms():

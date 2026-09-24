@@ -94,7 +94,7 @@ def page(title: str, body: str) -> HTMLResponse:
 <link rel="stylesheet" href="/tool-assets/tools.css">
 <script defer src="/tool-assets/tools.js"></script>
 </head><body><a class="skip" href="#main">Skip to content</a>
-<header><a class="brand" href="/tools">OS<span>Freelance</span></a>
+<header><a class="brand" href="/">OS<span>Freelance</span></a>
 <nav aria-label="Main"><a href="/tools">Free tools</a>
 <a href="/methodology">How data works</a>{workspace_nav}<a href="/docs">API</a></nav></header>
 <main id="main">{body}</main><footer>Independent work. Clear decisions.<br>

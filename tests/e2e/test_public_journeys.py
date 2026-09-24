@@ -158,6 +158,19 @@ def test_calculate_export_and_invalidate(page, server, slug):
     assert not errors
 
 
+def test_public_origin_opens_brand_homepage_and_tool(page, server):
+    from playwright.sync_api import expect
+
+    page.goto(server + "/")
+    expect(page.get_by_role("heading", level=1)).to_contain_text(
+        "Make independent"
+    )
+    expect(page.locator('a.brand[href="/"]')).to_be_visible()
+    page.locator('a[href="/tools/project-estimate"]').click()
+    expect(page).to_have_url(server + "/tools/project-estimate")
+    expect(page.get_by_role("heading", level=1)).to_have_text("Price a project")
+
+
 def test_mobile_and_keyboard_navigation(page, server):
     from playwright.sync_api import expect
 
