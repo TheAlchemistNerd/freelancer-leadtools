@@ -8,7 +8,7 @@
 
 ## Purpose and Strategic Role
 
-Freelancer LeadTools serves as the top-of-funnel customer acquisition engine for the Freelancer Ecosystem platform. This collection of free, SEO-optimized calculators helps freelancers and agencies make informed business decisions while capturing qualified leads for our paid products including Freelance Growth and Freelancer DealFlow.
+Freelancer LeadTools provides public calculators and a consent-aware workspace for freelancers and agencies. It is intended to introduce users to the wider OSFreelance product; acquisition and conversion performance are not yet established.
 
 The strategic objectives encompass attracting potential users through valuable free tools, educating users about their freelance business health across multiple dimensions, and converting users to paid products through targeted calls-to-action positioned strategically within calculator results.
 
@@ -63,12 +63,15 @@ freelancer-leadtools/
 ├── app/                    # FastAPI backend application
 │   ├── main.py             # Application entry point
 │   ├── routes/
-│   │   ├── individuals.py  # Individual freelancer calculators
-│   │   ├── agencies.py     # Agency calculators
-│   │   └── shared.py       # Shared calculators
-│   ├── schemas/            # Pydantic validation schemas
-│   ├── services/           # Business logic and calculations
-│   └── templates/          # Email notification templates
+│   │   ├── individuals.py  # Individual freelancer calculator APIs
+│   │   ├── agencies.py     # Agency calculator APIs
+│   │   ├── shared.py       # Shared calculator APIs
+│   │   ├── web.py          # Server-rendered homepage, tools and methodology
+│   │   └── workspace.py    # Same-origin account and product handoff workspace
+│   ├── schemas/            # Pydantic request/response validation
+│   ├── services/           # Deterministic formulas and reference data
+│   ├── repositories/       # PostgreSQL lead and reference-data persistence
+│   └── static/             # Branded CSS, JavaScript and image assets
 ├── tests/                  # Test suite
 ├── requirements.txt        # Python dependencies
 └── vercel.json             # Vercel deployment configuration
@@ -89,11 +92,11 @@ Users begin at free calculators where they input data such as weekly hours, slee
 | Component | Technology Selection |
 |-----------|---------------------|
 | Backend Framework | FastAPI |
-| Public interface | FastAPI JSON API and minimal HTML index |
+| Public interface | FastAPI JSON API plus server-rendered branded tools and workspace |
 | Durable storage | PostgreSQL via SQLAlchemy and Alembic |
 | Ephemeral coordination | Redis rate limits, deduplication, and CRM event stream |
-| Deployment | Container or Vercel Python runtime |
-| Future UI | Separate SEO web application; not currently implemented |
+| Deployment | LeadTools API/container serves both API and same-origin browser UI |
+| Separate frontend | Not part of this release; reconsider only with measured need |
 
 ---
 
@@ -169,12 +172,14 @@ MIT License - see LICENSE file for complete terms.
 - [freelancer-dealflow](https://github.com/your-org/freelancer-dealflow) - Agency management SaaS
 
 *Author: Nevil Maloba*  
-*Last Updated: March 2026*
+*Last Updated: September 2026*
 > Current implementation note: route contracts are regression-tested. Cost-of-living,
 > tax-reserve and retirement tools now use explicit user assumptions, not invented
 > country rates. Legacy URLs remain aliases but require the new scenario inputs.
 > Unknown market/benchmark metrics are empty or null, not verified estimates.
-> The public web UI and persistent product handoffs remain unimplemented.
+> The public UI and workspace are implemented in the LeadTools service. The
+> workspace proxies authenticated product handoffs; real cross-service
+> PostgreSQL/Redis journeys still need a fresh run for this release.
 > See the root docs/internal/leadtools-execution-plan.md for current work.
 
 ### Scenario tools (current API)

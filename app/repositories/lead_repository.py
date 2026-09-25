@@ -1,9 +1,9 @@
 """
-Lead Repository - Redis-backed storage for lead capture.
+Lead capture persists in PostgreSQL; Redis is used for optional coordination.
 
 Architecture:
-- Redis Hash for lead data
-- TTL: 7 days (auto-eviction)
+- PostgreSQL rows are the durable lead and consent record
+- Redis keys use bounded TTLs for deduplication, cached copies and counters
 - Deduplication: Check email in last 24 hours
 - CRM Sync: Background job via Redis Stream
 
@@ -54,10 +54,10 @@ class LeadStoreResult:
 
 class LeadRepository:
     """
-    Redis-backed repository for lead storage.
+    PostgreSQL-backed lead repository with optional Redis acceleration.
     
     Features:
-    - TTL-based eviction (7 days)
+    - Best-effort Redis mirror with a seven-day TTL
     - Deduplication (24h window)
     - Analytics counters
     - CRM sync queue
