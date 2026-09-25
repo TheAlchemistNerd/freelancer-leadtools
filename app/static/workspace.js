@@ -137,7 +137,13 @@ async function watchJob(id, kind) {
       if (["completed", "failed", "cancelled", "deleted"].includes(job.status)) {
         await refreshDocuments();
         if (kind === "draft" && job.status === "completed") await loadDraft(id);
-        else documentStatus.textContent = `Document job ${job.status}.`;
+        else if (
+          kind === "draft" &&
+          job.status === "failed" &&
+          job.error_code === "payment_required"
+        ) {
+          documentStatus.textContent = "OpenRouter requires available credits or a higher spend limit. Check its billing settings before submitting another AI draft.";
+        } else documentStatus.textContent = `Document job ${job.status}.`;
         return;
       }
     } catch (error) {

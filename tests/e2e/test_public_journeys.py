@@ -64,11 +64,15 @@ def server(tmp_path_factory):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
+    base = f"http://127.0.0.1:{port}"
     env = dict(
         os.environ,
         DATABASE_URL="sqlite:///" + (temp / "test.db").as_posix(),
         ENVIRONMENT="development",
         RATE_LIMIT_ENABLED="false",
+        IDENTITY_API_URL="http://127.0.0.1:1",
+        WORKSPACE_DEALFLOW_URL="http://127.0.0.1:1",
+        WEB_PUBLIC_ORIGIN=base,
     )
     log = (temp / "server.log").open("w")
     process = subprocess.Popen(
@@ -87,7 +91,6 @@ def server(tmp_path_factory):
         stdout=log,
         stderr=log,
     )
-    base = f"http://127.0.0.1:{port}"
     try:
         for _ in range(100):
             if process.poll() is not None:
@@ -302,6 +305,74 @@ def test_workspace_ui_confirmation_retry_and_signout(page, server):
     page.locator("#hours").fill("11")
     expect(page.get_by_role("button", name="Save to DealFlow")).to_be_hidden()
     expect(page.locator("#save-consent")).not_to_be_checked()
+
+
+def test_document_studio_explains_openrouter_billing_failure(page, server):
+    """A terminal provider billing error is actionable without exposing internals."""
+    from playwright.sync_api import expect
+
+    session = {"signed_in": False}
+
+    def login(route):
+        session["signed_in"] = True
+        route.fulfill(
+            status=200, content_type="application/json", body='{"signed_in":true}'
+        )
+
+    def proposals(route):
+        if not session["signed_in"]:
+            route.fulfill(
+                status=401,
+                content_type="application/json",
+                body='{"detail":"Sign in to view proposals."}',
+            )
+            return
+        route.fulfill(
+            status=200, content_type="application/json", body='{"items":[]}'
+        )
+
+    page.route("**/workspace/login", login)
+    page.route("**/workspace/proposals", proposals)
+    page.route(
+        "**/workspace/documents/jobs",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body='{"items":[]}'
+        ),
+    )
+    page.route(
+        "**/workspace/documents/drafts",
+        lambda route: route.fulfill(
+            status=202,
+            content_type="application/json",
+            body='{"id":"synthetic-draft","status":"queued"}',
+        ),
+    )
+    page.route(
+        "**/workspace/documents/drafts/synthetic-draft",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"id":"synthetic-draft","status":"failed","error_code":"payment_required"}',
+        ),
+    )
+    page.goto(server + "/workspace")
+    page.locator("#workspace-email").fill("synthetic@example.com")
+    page.locator("#workspace-password").fill("synthetic-password")
+    page.get_by_role("button", name="Sign in", exact=True).click()
+    expect(page.locator("#documents-heading")).to_be_visible()
+    page.locator("#document-title").fill("Synthetic website proposal")
+    page.locator("#document-client").fill("Example Books")
+    page.locator("#document-author").fill("Example Freelancer")
+    page.locator("#document-body").fill("Preserve this synthetic scope text.")
+    page.locator("#document-ai").check()
+    page.locator("#document-brief").fill("Draft a concise proposal from synthetic facts only.")
+    page.locator("#document-consent").check()
+    page.get_by_role("button", name="Prepare document", exact=True).click()
+    expect(page.locator("#document-status")).to_have_text(
+        "OpenRouter requires available credits or a higher spend limit. "
+        "Check its billing settings before submitting another AI draft.",
+        timeout=10000,
+    )
 
 
 def test_data_methodology_journey(page, server):
