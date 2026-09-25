@@ -75,10 +75,40 @@ async function loadDraft(id) {
       documentStatus.textContent = `AI draft status: ${result.status}.`;
       return;
     }
-    const missing = Array.isArray(result.draft.missing_information)
-      ? result.draft.missing_information : [];
+    const draft = result.draft;
+    const missing = Array.isArray(draft.missing_information)
+      ? draft.missing_information : [];
+    const content = document.querySelector("#draft-content");
+    content.replaceChildren();
+    const reviewSections = Array.isArray(result.review_sections)
+      ? result.review_sections : draft.sections;
+    if (Array.isArray(reviewSections)) {
+      for (const section of reviewSections) {
+        if (typeof section.heading !== "string" || typeof section.body !== "string") {
+          throw new Error("The draft contains an invalid section.");
+        }
+        const item = document.createElement("section");
+        item.className = "draft-section";
+        const heading = document.createElement("h4");
+        heading.textContent = section.heading;
+        const body = document.createElement("p");
+        body.textContent = section.body;
+        item.append(heading, body);
+        content.append(item);
+      }
+    } else if (typeof draft.summary === "string") {
+      const item = document.createElement("section");
+      item.className = "draft-section";
+      const heading = document.createElement("h4");
+      heading.textContent = "Introduction";
+      const body = document.createElement("p");
+      body.textContent = draft.summary;
+      item.append(heading, body);
+      content.append(item);
+    } else {
+      throw new Error("The draft has no reviewable content.");
+    }
     selectedDraft = {id, sha256: result.sha256, missing: missing.length};
-    document.querySelector("#draft-summary").textContent = result.draft.summary;
     const list = document.querySelector("#draft-missing");
     list.replaceChildren();
     for (const flag of missing) {

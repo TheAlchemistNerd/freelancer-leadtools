@@ -189,8 +189,9 @@ async def workspace_page():
         '<h3>Your proposals</h3><ul id="proposal-list"></ul>'
         '<section class="workspace-documents" aria-labelledby="documents-heading">'
         '<p class="eyebrow">DOCUMENT STUDIO</p><h2 id="documents-heading">Prepare a document</h2>'
-        '<p>Create a proposal or contract file from your own text. An optional '
-        'OpenRouter draft adds an introduction for your review. Neither path '
+        '<p>Create a proposal or contract file from your own text. OpenRouter can '
+        'draft proposal sections for review; for contracts it may draft only an '
+        'introduction. Neither path '
         'sends a contract, requests a signature or charges anyone.</p>'
         '<form id="document-form">'
         '<label for="document-template">Document type</label>'
@@ -205,10 +206,13 @@ async def workspace_page():
         '<input id="document-client" required maxlength="200">'
         '<label for="document-author">Your name</label>'
         '<input id="document-author" required maxlength="200">'
-        '<label for="document-body">Scope or terms you wrote</label>'
+        '<label for="document-body">Existing text or terms to preserve</label>'
         '<textarea id="document-body" required maxlength="10000" rows="8"></textarea>'
+        '<p>When AI is enabled, this text is not sent to OpenRouter and remains '
+        'unchanged in the rendered file. Put only information you consent to share '
+        'in the separate brief.</p>'
         '<label class="check-row" for="document-ai"><input id="document-ai" type="checkbox">'
-        ' Ask AI to draft an introduction</label>'
+        ' Ask AI to draft proposal sections (contract: introduction only)</label>'
         '<div id="document-ai-fields" hidden>'
         '<label for="document-brief">Brief for OpenRouter</label>'
         '<textarea id="document-brief" maxlength="20000" rows="5"></textarea>'
@@ -216,12 +220,13 @@ async def workspace_page():
         '<input id="document-consent" type="checkbox"> I consent to sending this brief '
         'to OpenRouter for this draft.</label>'
         '<p>Keep secrets and sensitive client details out of the brief. AI cannot '
-        'set prices, deadlines or legal terms; you remain responsible for review.</p></div>'
+        'set prices, payment terms or contract clauses. Review the complete draft '
+        'before acceptance.</p></div>'
         '<button type="submit">Prepare document</button></form>'
         '<p id="document-status" role="status" aria-live="polite"></p>'
         '<section id="draft-review" class="result" aria-labelledby="draft-review-heading" hidden>'
-        '<h3 id="draft-review-heading">Review AI introduction</h3>'
-        '<p id="draft-summary"></p><ul id="draft-missing"></ul>'
+        '<h3 id="draft-review-heading">Review complete document</h3>'
+        '<div id="draft-content"></div><ul id="draft-missing"></ul>'
         '<label class="check-row" for="draft-acknowledge" id="draft-acknowledge-row" hidden>'
         '<input id="draft-acknowledge" type="checkbox"> I reviewed the missing information.</label>'
         '<button id="draft-accept" type="button">Accept and render this version</button>'
@@ -404,7 +409,8 @@ async def document_draft(job_id: UUID, response: Response,
     # The upstream contains the owner's frozen document brief. Return only the
     # review fields needed by this page, never worker or provider internals.
     safe = {key: result[key] for key in
-            ("id", "status", "error_code", "draft", "sha256") if key in result}
+            ("id", "status", "error_code", "draft", "review_sections", "sha256")
+            if key in result}
     return private_response(response, safe)
 
 

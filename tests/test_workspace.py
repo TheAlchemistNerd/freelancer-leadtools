@@ -190,6 +190,8 @@ def test_document_studio_requires_session_and_uses_branded_page(gateway):
     assert page.status_code == 200
     assert 'id="document-form"' in page.text
     assert 'id="draft-review"' in page.text
+    assert 'id="draft-content"' in page.text
+    assert "contract: introduction only" in page.text
     assert "OpenRouter" in page.text
     assert "private-token" not in page.text
     assert client.get("/workspace/documents/jobs").status_code == 401
@@ -240,13 +242,33 @@ def test_openrouter_draft_review_and_acceptance_keep_provider_key_server_side(ga
     digest = "a" * 64
     upstream.request.return_value = httpx.Response(200, json={
         "id": job_id, "status": "completed", "sha256": digest,
-        "draft": {"summary": "Synthetic introduction", "missing_information": ["Client deadline"]},
+        "draft": {
+            "sections": [
+                {"heading": "Executive summary", "body": "Synthetic proposal narrative."},
+                {"heading": "Project outcomes", "body": "Outcomes to confirm."},
+                {"heading": "Scope and deliverables", "body": "Scope to confirm."},
+                {"heading": "Approach and schedule", "body": "Schedule to confirm."},
+                {"heading": "Assumptions and exclusions", "body": "To be confirmed."},
+                {"heading": "Change control", "body": "To be confirmed."},
+                {"heading": "Handoff and next steps", "body": "To be confirmed."},
+                {"heading": "Missing information for approval", "body": "Client deadline."},
+            ],
+            "missing_information": ["Client deadline"],
+        },
+        "review_sections": [
+            {"heading": "Executive summary", "body": "Synthetic proposal narrative."},
+            {"heading": "Scope and terms", "body": "Preserved user-authored text."},
+            {"heading": "Commercial terms review", "body": "Application-owned notice."},
+        ],
         "document": {"client_name": "private upstream snapshot"},
         "provider_internal": "do not expose",
     })
     review = client.get(f"/workspace/documents/drafts/{job_id}")
     assert review.status_code == 200
-    assert review.json()["draft"]["summary"] == "Synthetic introduction"
+    assert review.json()["draft"]["sections"][0]["heading"] == "Executive summary"
+    assert len(review.json()["draft"]["sections"]) == 8
+    assert review.json()["review_sections"][1]["body"] == "Preserved user-authored text."
+    assert review.json()["review_sections"][2]["heading"] == "Commercial terms review"
     assert "document" not in review.json() and "provider_internal" not in review.json()
 
     upstream.request.return_value = httpx.Response(202, json={"id": str(uuid4()), "approval_id": str(uuid4())})

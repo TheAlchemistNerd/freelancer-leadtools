@@ -52,11 +52,16 @@ account changes. Saved-result retrieval is not conversion into a proposal.
 
 The branded `/workspace` now includes a document form and job list. A signed-in
 user can submit a validated `proposal-v1` or `contract-v1` structure for DOCX/PDF
-rendering, or explicitly consent to an OpenRouter-only introductory draft. The
-browser never receives provider or bearer credentials. A completed AI draft is
-shown as literal text with missing-information flags; acceptance sends its exact
-SHA-256 to DealFlow and queues rendering. A document created this way is a draft
-file, not an approved, sent or signed contract.
+rendering, or explicitly consent to OpenRouter drafting. Proposal drafts use a
+bounded set of narrative sections; contract drafts remain introduction-only.
+The browser never receives provider or bearer credentials. The review shows the
+literal final section order: generated text, user-authored text preserved
+verbatim, and an application-owned commercial notice when no commercial section
+was supplied. The gateway returns only review fields, not the stored source
+document or provider internals. Acceptance sends the AI-output SHA-256 to
+DealFlow, which deterministically freezes the composed section snapshot and
+queues rendering. A document created this way is a review draft file, not an
+approved, sent or signed contract.
 
 The fixed-destination gateway proxies owner-scoped job status and a bounded
 download with a generated filename, allowed PDF/DOCX content types and no-store

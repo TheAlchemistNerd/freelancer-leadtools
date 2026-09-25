@@ -218,6 +218,30 @@ textarea {
   margin-top: 24px;
 }
 
+#draft-content {
+  display: grid;
+  gap: 16px;
+  max-width: 820px;
+}
+
+.draft-section {
+  padding: 16px 18px;
+  border: 1px solid #d8deda;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.draft-section h4 {
+  margin: 0 0 8px;
+  color: #145c50;
+}
+
+.draft-section p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 form button {
   margin-top: 24px;
 }
